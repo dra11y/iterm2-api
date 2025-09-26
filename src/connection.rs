@@ -12,7 +12,6 @@ pub struct ITerm2Connection {
 
 impl ITerm2Connection {
     pub async fn connect() -> Result<Self> {
-
         // Unix domain socket is the ONLY way to connect to iTerm2
         let socket_path = dirs::home_dir()
             .unwrap_or_default()
@@ -44,9 +43,6 @@ impl ITerm2Connection {
             .body(())
             .map_err(|e| Error::Connection(format!("Failed to build WebSocket request: {e}")))?;
 
-        // iTerm2 handles authentication automatically via its security model
-        let request = request;
-
         // Perform the WebSocket handshake using client_async
         let (websocket, response) = client_async(request, stream)
             .await
@@ -64,12 +60,8 @@ impl ITerm2Connection {
             )));
         }
 
-        Ok(Self {
-            websocket,
-        })
+        Ok(Self { websocket })
     }
-
-    
 
     pub async fn send_message(&mut self, message: ClientOriginatedMessage) -> Result<()> {
         let mut bytes = Vec::new();

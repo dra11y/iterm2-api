@@ -19,9 +19,6 @@ pub enum Error {
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
 
-    #[error("Authentication error: {0}")]
-    Authentication(String),
-
     #[error("Connection failed: {0}")]
     Connection(String),
 

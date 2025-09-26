@@ -22,8 +22,11 @@ Rust library for programmatically controlling iTerm2 via its official WebSocket 
 ## Important Note
 Rust apps cannot be launched from iTerm2's Scripts menu (Python-only). Cookie authentication (ITERM2_COOKIE) is impossible for Rust apps since iTerm2 only launches Python scripts from the Scripts menu.
 
+## API Server Clarification
+This library uses iTerm2's "Python API" server setting, but this is misleading naming. The actual communication is via Protocol Buffers over WebSocket - Python is NOT an intermediary and this library uses no Python bindings. The "Python API" setting simply enables iTerm2's WebSocket API server.
+
 ## Forbidden Patterns
-- **NEVER** use ITERM2_COOKIE environment variable - this only works for Python scripts launched from iTerm2's Scripts menu
+- **NEVER** use ITERM2_COOKIE environment variable - this only works for Python scripts launched from iTerm2's Scripts menu (Rust apps CANNOT be added to this menu)
 - **NEVER** reference AppleScript - this is a pure Rust project with no AppleScript integration
 - **NEVER** attempt cookie-based authentication - iTerm2 handles authentication automatically via its security model
 
@@ -54,3 +57,8 @@ Rust apps cannot be launched from iTerm2's Scripts menu (Python-only). Cookie au
 - `build.rs`: Compiles protobuf definitions to Rust code
 - `justfile`: Task runner for common operations
 - Uses protobuf 3.7.2 (4.32 is broken)
+
+## TODO List
+- **Fix API clarity**: `create_tab()` method is confusing - `create_tab(None, None)` creates a new window, not a tab. Consider making window_id required or renaming method to be clearer about window vs tab creation
+- **DOCUMENT ALL** public methods, functions, structs, and enums+variants.
+- IMPROVE example docs.
