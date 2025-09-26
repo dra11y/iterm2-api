@@ -1,0 +1,27 @@
+[package]
+name = "iterm2-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+base64 = "0.22"
+uuid = { version = "1.0", features = ["v4"] }
+protobuf = "3.7.2"
+dirs = "6.0.0"
+url = "2.5.7"
+
+[build-dependencies]
+anyhow = "1.0.100"
+protobuf-codegen = "3.7.2"
+
+[[example]]
+name = "basic_connection"
+path = "examples/basic_connection.rs"
