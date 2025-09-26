@@ -1,9 +1,18 @@
+# Run cargo check
+check:
+    cargo check
+
+# Lint and fix with dylint / Tom's custom lints
 fix:
     cargo dylint --all --fix -- --allow-dirty
     cargo fmt
 
-check:
-    cargo check
+# Install global crate if not found (installs binstall first if not installed)
+@binstall what="":
+    (which {{what}} 2>&1 >/dev/null) || (cargo binstall --force -y {{what}}) || (cargo install --locked cargo-binstall && cargo binstall --force -y {{what}})
+
+readme: (binstall 'cargo-readme')
+    cargo readme > README.md
 
 # Download iTerm2 API proto file from GitHub
 download-proto:
@@ -13,8 +22,6 @@ download-proto:
     curl -o proto/api.proto https://raw.githubusercontent.com/gnachman/iTerm2/master/proto/api.proto
     echo "Downloaded api.proto to proto/"
 
-# Generate Rust code from proto files
+# Generate Rust code from .proto file
 generate-proto:
-    #!/usr/bin/env bash
-    set -e
     cargo build --build-only
