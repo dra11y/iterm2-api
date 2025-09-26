@@ -2,12 +2,12 @@
 //!
 //! ## Prerequisites
 //!
-//! Before using this library, you must enable iTerm2's API server:
+//! Before using this library, you must enable iTerm2's API server and grant permission:
 //!
 //! 1. Open iTerm2
 //! 2. Go to **Settings > General > Magic**
 //! 3. Check **"Enable Python API"**
-//! 4. To avoid permission prompts every time, change **"Require 'Automation' permission"** to **"Allow all apps to connect"**
+//! 4. Optional: To avoid a permission prompt every time you run your helper app, change **"Require 'Automation' permission"** to **"Allow all apps to connect"**
 //!
 //! ## Basic Usage
 //!
@@ -28,14 +28,6 @@
 //!     Ok(())
 //! }
 //! ```
-//!
-//! ## Authentication
-//!
-//! The library supports multiple authentication methods:
-//!
-//! 1. **Automatic authorization** (if "Allow all apps to connect" is enabled)
-//! 2. **User prompt** (you'll be asked to grant permission when connecting)
-//! 3. **Cookie authentication** (if running from iTerm2 with `ITERM2_COOKIE` environment variable)
 //!
 //! ## Examples
 //!
@@ -79,11 +71,9 @@
 //!
 //! See the `examples/` directory for more comprehensive usage examples.
 
-pub mod auth;
 pub mod connection;
 pub mod error;
 pub mod generated;
 
-pub use auth::Authenticator;
 pub use connection::ITerm2Connection;
 pub use error::{Error, Result};

@@ -4,12 +4,12 @@ A Rust library for programmatically controlling iTerm2 via its official API over
 
 ### Prerequisites
 
-Before using this library, you must enable iTerm2's API server:
+Before using this library, you must enable iTerm2's API server and grant permission:
 
 1. Open iTerm2
 2. Go to **Settings > General > Magic**
 3. Check **"Enable Python API"**
-4. To avoid permission prompts every time, change **"Require 'Automation' permission"** to **"Allow all apps to connect"**
+4. Optional: To avoid a permission prompt every time you run your helper app, change **"Require 'Automation' permission"** to **"Allow all apps to connect"**
 
 ### Basic Usage
 
@@ -30,14 +30,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
-
-### Authentication
-
-The library supports multiple authentication methods:
-
-1. **Automatic authorization** (if "Allow all apps to connect" is enabled)
-2. **User prompt** (you'll be asked to grant permission when connecting)
-3. **Cookie authentication** (if running from iTerm2 with `ITERM2_COOKIE` environment variable)
 
 ### Examples
 

@@ -1,4 +1,3 @@
-use crate::auth::Authenticator;
 use crate::error::{Error, Result};
 use crate::generated::api::*;
 use futures_util::{SinkExt, StreamExt};
@@ -9,12 +8,10 @@ use tokio_tungstenite::{WebSocketStream, client_async};
 
 pub struct ITerm2Connection {
     websocket: WebSocketStream<UnixStream>,
-    authenticator: Authenticator,
 }
 
 impl ITerm2Connection {
     pub async fn connect() -> Result<Self> {
-        let authenticator = Authenticator::new();
 
         // Unix domain socket is the ONLY way to connect to iTerm2
         let socket_path = dirs::home_dir()
@@ -47,28 +44,8 @@ impl ITerm2Connection {
             .body(())
             .map_err(|e| Error::Connection(format!("Failed to build WebSocket request: {e}")))?;
 
-        // Try to get cookie from environment (if iTerm2 launched us)
-        let request = if let Ok(cookie) = std::env::var("ITERM2_COOKIE") {
-            Request::builder()
-                .uri("ws://localhost/")
-                .header("Host", "localhost")
-                .header("Upgrade", "websocket")
-                .header("Connection", "Upgrade")
-                .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-                .header("Sec-WebSocket-Version", "13")
-                .header("Sec-WebSocket-Protocol", "api.iterm2.com")
-                .header("Origin", "ws://localhost/")
-                .header("x-iterm2-library-version", "rust 1.0")
-                .header("x-iterm2-cookie", cookie)
-                .body(())
-                .map_err(|e| {
-                    Error::Connection(format!(
-                        "Failed to build WebSocket request with cookie: {e}"
-                    ))
-                })?
-        } else {
-            request
-        };
+        // iTerm2 handles authentication automatically via its security model
+        let request = request;
 
         // Perform the WebSocket handshake using client_async
         let (websocket, response) = client_async(request, stream)
@@ -89,19 +66,10 @@ impl ITerm2Connection {
 
         Ok(Self {
             websocket,
-            authenticator,
         })
     }
 
-    pub async fn authenticate(&mut self) -> Result<()> {
-        if let Some(_auth_header) = self.authenticator.get_auth_header() {
-            // Note: iTerm2 doesn't seem to have a separate authentication request
-            // The authentication is handled via headers in WebSocket connection
-            // For now, we'll skip this and assume authentication is handled by the server
-        }
-
-        Ok(())
-    }
+    
 
     pub async fn send_message(&mut self, message: ClientOriginatedMessage) -> Result<()> {
         let mut bytes = Vec::new();
