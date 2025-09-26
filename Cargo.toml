@@ -2,7 +2,7 @@
 name = "iterm2-api"
 version = "0.1.0"
 edition = "2024"
-description = "A Rust API to programmatically access iTerm2's Python API directly over Unix domain socket without Python."
+description = "A Rust library for programmatically controlling iTerm2 via its official API over Unix domain socket without Python."
 authors = ["Tom Grushka <tom@dra11y.com>"]
 homepage = "https://github.com/dra11y/iterm2-api"
 repository = "https://github.com/dra11y/iterm2-api"
@@ -30,3 +30,6 @@ protobuf-codegen = "3.7.2"
 [[example]]
 name = "basic_connection"
 path = "examples/basic_connection.rs"
+
+[workspace.metadata.dylint]
+libraries = [{ path = "/Users/tom/apps/toms-lints" }]

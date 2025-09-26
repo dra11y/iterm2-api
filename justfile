@@ -1,3 +1,10 @@
+fix:
+    cargo dylint --all --fix -- --allow-dirty
+    cargo fmt
+
+check:
+    cargo check
+
 # Download iTerm2 API proto file from GitHub
 download-proto:
     #!/usr/bin/env bash

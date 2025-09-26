@@ -4,11 +4,11 @@ use tokio;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to iTerm2...");
-    
+
     let mut connection = ITerm2Connection::connect().await?;
-    
+
     println!("Connected successfully!");
-    
+
     // Try to list sessions
     println!("Listing sessions...");
     match connection.list_sessions().await {
@@ -22,16 +22,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Failed to list sessions: {}", e);
         }
     }
-    
+
     // Try to create a new tab
     println!("Creating new tab...");
-    match connection.create_tab(None).await {
+    match connection.create_tab(None, None).await {
         Ok(session) => {
-            println!("Created tab with session ID: {}", session.unique_identifier());
-            
+            println!(
+                "Created tab with session ID: {}",
+                session.unique_identifier()
+            );
+
             // Try to send some text
             println!("Sending 'echo Hello World' to the new session...");
-            match connection.send_text(session.unique_identifier(), "echo Hello World\r").await {
+            match connection
+                .send_text(session.unique_identifier(), "echo Hello World\r")
+                .await
+            {
                 Ok(()) => {
                     println!("Text sent successfully!");
                 }
@@ -44,6 +50,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Failed to create tab: {}", e);
         }
     }
-    
+
     Ok(())
 }
