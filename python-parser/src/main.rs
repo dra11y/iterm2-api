@@ -3,7 +3,7 @@ use chrono;
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::{fs::read_dir, io::Write, path::Path};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use tracing_subscriber::fmt;
 
 #[derive(Debug, Default, ValueEnum, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,27 +22,27 @@ enum OutFormat {
 )]
 struct Cli {
     /// Path to Python source directory
-    #[arg(long)]
-    source_path: String,
+    #[arg(short, long)]
+    source: String,
 
     /// Query mode: filter classes and methods
-    #[arg(long)]
+    #[arg(short, long)]
     query: Option<String>,
 
     /// Filter by class name (comma-separated)
-    #[arg(long)]
+    #[arg(short, long)]
     class: Option<String>,
 
     /// Filter by method name pattern
-    #[arg(long)]
+    #[arg(short, long)]
     method: Option<String>,
 
     /// Filter by parameter name
-    #[arg(long)]
+    #[arg(short, long)]
     parameter: Option<String>,
 
     /// Export format (json, csv, markdown)
-    #[arg(long, default_value = "json")]
+    #[arg(short, long, default_value = "json")]
     format: OutFormat,
 
     /// Generate progress report for PROGRESS.md
@@ -139,8 +139,8 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    info!("Parsing Python API from: {}", cli.source_path);
-    let api = parse_python_api(&cli.source_path).await?;
+    info!("Parsing Python API from: {}", cli.source);
+    let api = parse_python_api(&cli.source).await?;
 
     // Handle different output modes
     if cli.progress {
@@ -209,13 +209,27 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
     collect_python_files(source_dir, &mut parse_futures, &mut total_files)?;
 
     // Wait for all parsing to complete
+    warn!("Waiting for parsing...");
     let results = futures::future::join_all(parse_futures).await;
+    warn!("Parsing complete!");
 
     for result in results {
-        if let Ok(Some(file_api)) = result {
-            classes.extend(file_api.classes);
-            enums.extend(file_api.enums);
-            functions.extend(file_api.functions);
+        match result {
+            Ok(Some(file_api)) => {
+                classes.extend(file_api.classes);
+                enums.extend(file_api.enums);
+                functions.extend(file_api.functions);
+            }
+            Ok(None) => {
+                // File parsing failed, already logged in the task
+            }
+            Err(join_error) => {
+                if join_error.is_panic() {
+                    warn!("Task panicked");
+                } else {
+                    warn!("Task failed: {}", join_error);
+                }
+            }
         }
     }
 
@@ -246,10 +260,22 @@ struct FileApi {
 }
 
 async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
+    warn!("parse_python_file: {}", file_path.display());
     let file_str = file_path.to_string_lossy().to_string();
 
     // Parse the Python file using tree-parser
-    let parsed_file = tree_parser::parse_file(&file_str, tree_parser::Language::Python).await?;
+    let parsed_file = match tree_parser::parse_file(&file_str, tree_parser::Language::Python).await
+    {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            warn!("Failed to parse file {}: {}", file_path.display(), e);
+            return Ok(FileApi {
+                classes: Vec::new(),
+                enums: Vec::new(),
+                functions: Vec::new(),
+            });
+        }
+    };
 
     let mut classes = Vec::new();
     let mut enums = Vec::new();
@@ -259,8 +285,14 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
     let class_constructs = tree_parser::search_by_node_type(&parsed_file, "class_definition", None);
     for class_construct in class_constructs {
         if let Some(_class_name) = &class_construct.name {
-            let class = parse_class_definition(&parsed_file, &class_construct, file_path)?;
-            classes.push(class);
+            match parse_class_definition(&parsed_file, &class_construct, file_path) {
+                Ok(class) => classes.push(class),
+                Err(e) => warn!(
+                    "Failed to parse class definition in {}: {}",
+                    file_path.display(),
+                    e
+                ),
+            }
         }
     }
 
@@ -270,34 +302,72 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
     for func_construct in function_constructs {
         if let Some(_func_name) = &func_construct.name {
             // Check if this function is not inside a class
-            if !is_inside_class(&parsed_file, &func_construct) {
-                let func = parse_function_definition(&parsed_file, &func_construct, file_path)?;
-                functions.push(func);
+            match is_inside_class(&parsed_file, &func_construct) {
+                Ok(false) => {
+                    match parse_function_definition(&parsed_file, &func_construct, file_path) {
+                        Ok(func) => functions.push(func),
+                        Err(e) => warn!(
+                            "Failed to parse function definition in {}: {}",
+                            file_path.display(),
+                            e
+                        ),
+                    }
+                }
+                Ok(true) => {} // Function is inside a class, skip
+                Err(e) => warn!(
+                    "Failed to check if function is inside class in {}: {}",
+                    file_path.display(),
+                    e
+                ),
             }
         }
     }
 
     // Find all enum definitions (Python enums are typically classes inheriting from Enum)
     // First check if Enum is imported in this file
-    if inherits_from_enum(&parsed_file) {
-        let all_class_constructs =
-            tree_parser::search_by_node_type(&parsed_file, "class_definition", None);
+    match inherits_from_enum(&parsed_file) {
+        Ok(true) => {
+            let all_class_constructs =
+                tree_parser::search_by_node_type(&parsed_file, "class_definition", None);
 
-        for class_construct in all_class_constructs {
-            if let Some(_class_name) = &class_construct.name {
-                // Check if it inherits from Enum
-                if let Some(superclasses) = find_superclasses(&parsed_file, &class_construct) {
-                    if superclasses
-                        .iter()
-                        .any(|superclass| superclass == "Enum" || superclass.ends_with("Enum"))
-                    {
-                        let enum_def =
-                            parse_enum_definition(&parsed_file, &class_construct, file_path)?;
-                        enums.push(enum_def);
+            for class_construct in all_class_constructs {
+                if let Some(_class_name) = &class_construct.name {
+                    // Check if it inherits from Enum
+                    match find_superclasses(&parsed_file, &class_construct) {
+                        Ok(Some(superclasses)) => {
+                            if superclasses.iter().any(|superclass| {
+                                superclass == "Enum" || superclass.ends_with("Enum")
+                            }) {
+                                match parse_enum_definition(
+                                    &parsed_file,
+                                    &class_construct,
+                                    file_path,
+                                ) {
+                                    Ok(enum_def) => enums.push(enum_def),
+                                    Err(e) => warn!(
+                                        "Failed to parse enum definition in {}: {}",
+                                        file_path.display(),
+                                        e
+                                    ),
+                                }
+                            }
+                        }
+                        Ok(None) => {} // No superclasses
+                        Err(e) => warn!(
+                            "Failed to find superclasses in {}: {}",
+                            file_path.display(),
+                            e
+                        ),
                     }
                 }
             }
         }
+        Ok(false) => {} // No Enum import
+        Err(e) => warn!(
+            "Failed to check for Enum import in {}: {}",
+            file_path.display(),
+            e
+        ),
     }
 
     Ok(FileApi {
@@ -317,8 +387,10 @@ fn parse_class_definition(
     let mut inherits = Vec::new();
 
     // Extract inheritance
-    if let Some(superclasses) = find_superclasses(parsed_file, class_construct) {
-        inherits = superclasses;
+    match find_superclasses(parsed_file, class_construct) {
+        Ok(Some(superclasses)) => inherits = superclasses,
+        Ok(None) => {} // No superclasses
+        Err(e) => warn!("Failed to find superclasses for class: {}", e),
     }
 
     // Find methods inside this class - simpler approach
@@ -327,8 +399,10 @@ fn parse_class_definition(
     for func_construct in all_function_constructs {
         if is_within_construct(parsed_file, &func_construct, class_construct) {
             if let Some(_method_name) = &func_construct.name {
-                let method = parse_method_definition(parsed_file, &func_construct)?;
-                methods.push(method);
+                match parse_method_definition(parsed_file, &func_construct) {
+                    Ok(method) => methods.push(method),
+                    Err(e) => warn!("Failed to parse method definition: {}", e),
+                }
             }
         }
     }
@@ -338,11 +412,17 @@ fn parse_class_definition(
         tree_parser::search_by_node_type(parsed_file, "decorated_definition", None);
     for decorated_construct in all_decorated_constructs {
         if is_within_construct(parsed_file, &decorated_construct, class_construct) {
-            if is_property_decorator(parsed_file, &decorated_construct) {
-                if let Some(_property_name) = &decorated_construct.name {
-                    let property = parse_property_definition(parsed_file, &decorated_construct)?;
-                    properties.push(property);
+            match is_property_decorator(parsed_file, &decorated_construct) {
+                Ok(true) => {
+                    if let Some(_property_name) = &decorated_construct.name {
+                        match parse_property_definition(parsed_file, &decorated_construct) {
+                            Ok(property) => properties.push(property),
+                            Err(e) => warn!("Failed to parse property definition: {}", e),
+                        }
+                    }
                 }
+                Ok(false) => {} // Not a property decorator
+                Err(e) => warn!("Failed to check if decorated definition is property: {}", e),
             }
         }
     }
@@ -409,7 +489,13 @@ fn parse_enum_definition(
     enum_construct: &tree_parser::CodeConstruct,
     file_path: &Path,
 ) -> Result<PythonEnum> {
-    let values = extract_enum_values(parsed_file, enum_construct);
+    let values = match extract_enum_values(parsed_file, enum_construct) {
+        Ok(values) => values,
+        Err(e) => {
+            warn!("Failed to extract enum values: {}", e);
+            Vec::new()
+        }
+    };
 
     Ok(PythonEnum {
         name: enum_construct.name.clone().unwrap_or_default(),
@@ -487,23 +573,17 @@ fn extract_parameters(
     construct: &tree_parser::CodeConstruct,
 ) -> Vec<Parameter> {
     // Debug: Log what we're looking for
-    eprintln!(
-        "DEBUG: Extracting parameters for function: {:?}",
-        construct.name
-    );
-    eprintln!(
-        "DEBUG: Function construct spans bytes {} to {}",
+    debug!("Extracting parameters for function: {:?}", construct.name);
+    debug!(
+        "Function construct spans bytes {} to {}",
         construct.start_byte, construct.end_byte
     );
 
     // Check if the tree-parser already extracted parameters in the metadata
-    eprintln!(
-        "DEBUG: Metadata parameters: {:?}",
-        construct.metadata.parameters
-    );
+    debug!("Metadata parameters: {:?}", construct.metadata.parameters);
 
     if !construct.metadata.parameters.is_empty() {
-        eprintln!("DEBUG: Using parameters from metadata");
+        debug!("Using parameters from metadata");
         // Convert tree-parser Parameter to our Parameter type
         return construct
             .metadata
@@ -522,12 +602,12 @@ fn extract_parameters(
     let mut parameters = Vec::new();
 
     // Debug: Check children of this function construct
-    eprintln!(
-        "DEBUG: Function construct has {} children",
+    debug!(
+        "Function construct has {} children",
         construct.children.len()
     );
     for (i, child) in construct.children.iter().enumerate() {
-        eprintln!("DEBUG: Child {}: {} ({:?})", i, child.node_type, child.name);
+        debug!("Child {}: {} ({:?})", i, child.node_type, child.name);
     }
 
     // Try to find parameters using a tree-sitter query
@@ -543,13 +623,13 @@ fn extract_parameters(
     // For now, let's try a simpler approach: parse the source code directly
     // Extract the function signature from the source code
     let source = &construct.source_code;
-    eprintln!("DEBUG: Function source code: {}", source);
+    debug!("Function source code: {}", source);
 
     // Look for the parameter list between parentheses
     if let Some(start) = source.find('(') {
         if let Some(end) = source.find(')') {
             let param_section = &source[start + 1..end];
-            eprintln!("DEBUG: Parameter section: {}", param_section);
+            debug!("Parameter section: {}", param_section);
 
             // Split by commas and parse each parameter
             for param_str in param_section.split(',') {
@@ -585,10 +665,7 @@ fn extract_parameters(
                         };
 
                         if !final_name.is_empty() {
-                            eprintln!(
-                                "DEBUG: Adding parameter: {} with type: {}",
-                                final_name, type_hint
-                            );
+                            debug!("Adding parameter: {} with type: {}", final_name, type_hint);
                             parameters.push(Parameter {
                                 name: final_name.to_string(),
                                 type_hint,
@@ -601,7 +678,7 @@ fn extract_parameters(
         }
     }
 
-    eprintln!("DEBUG: Final parameters: {:?}", parameters);
+    debug!("Final parameters: {:?}", parameters);
     parameters
 }
 
@@ -708,7 +785,7 @@ fn extract_decorators(
 fn is_inside_class(
     parsed_file: &tree_parser::ParsedFile,
     construct: &tree_parser::CodeConstruct,
-) -> bool {
+) -> Result<bool> {
     // Look for parent class_definition
     let class_query = format!(
         "(class_definition
@@ -718,21 +795,26 @@ fn is_inside_class(
         )"
     );
 
-    if let Ok(class_constructs) = tree_parser::search_by_query(parsed_file, &class_query) {
-        for class_construct in class_constructs {
-            if is_within_construct(parsed_file, construct, &class_construct) {
-                return true;
+    match tree_parser::search_by_query(parsed_file, &class_query) {
+        Ok(class_constructs) => {
+            for class_construct in class_constructs {
+                if is_within_construct(parsed_file, construct, &class_construct) {
+                    return Ok(true);
+                }
             }
+            Ok(false)
         }
+        Err(e) => Err(anyhow::anyhow!(
+            "Failed to search for class definitions: {}",
+            e
+        )),
     }
-
-    false
 }
 
 fn find_superclasses(
     parsed_file: &tree_parser::ParsedFile,
     construct: &tree_parser::CodeConstruct,
-) -> Option<Vec<String>> {
+) -> Result<Option<Vec<String>>> {
     let mut superclasses = Vec::new();
 
     // Look for argument_list in class definition
@@ -744,36 +826,39 @@ fn find_superclasses(
         )"
     );
 
-    if let Ok(superclass_constructs) = tree_parser::search_by_query(parsed_file, &superclass_query)
-    {
-        for superclass_construct in superclass_constructs {
-            if is_within_construct(parsed_file, &superclass_construct, construct) {
-                if let Some(name) = &superclass_construct.name {
-                    superclasses.push(name.clone());
+    match tree_parser::search_by_query(parsed_file, &superclass_query) {
+        Ok(superclass_constructs) => {
+            for superclass_construct in superclass_constructs {
+                if is_within_construct(parsed_file, &superclass_construct, construct) {
+                    if let Some(name) = &superclass_construct.name {
+                        superclasses.push(name.clone());
+                    }
                 }
             }
         }
+        Err(e) => return Err(anyhow::anyhow!("Failed to search for superclasses: {}", e)),
     }
 
     if superclasses.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(superclasses)
+        Ok(Some(superclasses))
     }
 }
 
-fn inherits_from_enum(parsed_file: &tree_parser::ParsedFile) -> bool {
+fn inherits_from_enum(parsed_file: &tree_parser::ParsedFile) -> Result<bool> {
     // Look for import statements that import Enum
     let import_nodes = tree_parser::search_by_node_type(parsed_file, "import_statement", None);
 
     for import_node in import_nodes {
         // Look for identifiers within import statements
         let import_identifiers = tree_parser::search_by_node_type(parsed_file, "identifier", None);
+
         for identifier in import_identifiers {
             if is_within_construct(parsed_file, &identifier, &import_node) {
                 if let Some(name) = &identifier.name {
                     if name == "Enum" {
-                        return true;
+                        return Ok(true);
                     }
                 }
             }
@@ -787,24 +872,25 @@ fn inherits_from_enum(parsed_file: &tree_parser::ParsedFile) -> bool {
     for import_from_node in import_from_nodes {
         // Look for identifiers within import from statements
         let import_identifiers = tree_parser::search_by_node_type(parsed_file, "identifier", None);
+
         for identifier in import_identifiers {
             if is_within_construct(parsed_file, &identifier, &import_from_node) {
                 if let Some(name) = &identifier.name {
                     if name == "Enum" {
-                        return true;
+                        return Ok(true);
                     }
                 }
             }
         }
     }
 
-    false
+    Ok(false)
 }
 
 fn is_property_decorator(
     parsed_file: &tree_parser::ParsedFile,
     construct: &tree_parser::CodeConstruct,
-) -> bool {
+) -> Result<bool> {
     // Look for decorator nodes within the decorated definition
     let decorator_nodes = tree_parser::search_by_node_type(parsed_file, "decorator", None);
 
@@ -813,11 +899,12 @@ fn is_property_decorator(
             // Look for identifiers within this decorator
             let decorator_identifiers =
                 tree_parser::search_by_node_type(parsed_file, "identifier", None);
+
             for identifier in decorator_identifiers {
                 if is_within_construct(parsed_file, &identifier, &decorator_node) {
                     if let Some(name) = &identifier.name {
                         if name == "property" {
-                            return true;
+                            return Ok(true);
                         }
                     }
                 }
@@ -825,7 +912,7 @@ fn is_property_decorator(
         }
     }
 
-    false
+    Ok(false)
 }
 
 fn has_setter(
@@ -865,7 +952,7 @@ fn has_setter(
 fn extract_enum_values(
     parsed_file: &tree_parser::ParsedFile,
     construct: &tree_parser::CodeConstruct,
-) -> Vec<EnumValue> {
+) -> Result<Vec<EnumValue>> {
     let mut values = Vec::new();
 
     // Look for assignment statements within the enum class
@@ -880,26 +967,28 @@ fn extract_enum_values(
         )"
     );
 
-    if let Ok(enum_value_constructs) = tree_parser::search_by_query(parsed_file, &enum_value_query)
-    {
-        for enum_value_construct in enum_value_constructs {
-            if is_within_construct(parsed_file, &enum_value_construct, construct) {
-                if let Some(name) = &enum_value_construct.name {
-                    let value = if enum_value_construct.source_code.is_empty() {
-                        None
-                    } else {
-                        Some(enum_value_construct.source_code.clone())
-                    };
-                    values.push(EnumValue {
-                        name: name.clone(),
-                        value,
-                    });
+    match tree_parser::search_by_query(parsed_file, &enum_value_query) {
+        Ok(enum_value_constructs) => {
+            for enum_value_construct in enum_value_constructs {
+                if is_within_construct(parsed_file, &enum_value_construct, construct) {
+                    if let Some(name) = &enum_value_construct.name {
+                        let value = if enum_value_construct.source_code.is_empty() {
+                            None
+                        } else {
+                            Some(enum_value_construct.source_code.clone())
+                        };
+                        values.push(EnumValue {
+                            name: name.clone(),
+                            value,
+                        });
+                    }
                 }
             }
         }
+        Err(e) => return Err(anyhow::anyhow!("Failed to search for enum values: {}", e)),
     }
 
-    values
+    Ok(values)
 }
 
 fn is_within_construct(
