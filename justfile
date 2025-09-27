@@ -1,10 +1,13 @@
-# Run cargo check
+list:
+    just --list
+
+# Run dylint
 check:
-    cargo dylint --all
+    cargo dylint --all --workspace
 
 # Lint and fix with dylint / Tom's custom lints
 fix:
-    cargo dylint --all --fix -- --allow-dirty
+    cargo dylint --all --workspace --fix -- --allow-dirty
     cargo fmt
 
 # Run the api-parser to analyze iTerm2 python API code

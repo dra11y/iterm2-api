@@ -33,4 +33,4 @@ path = "examples/basic_connection.rs"
 members = ["download-docs", "api-parser"]
 
 [workspace.metadata.dylint]
-libraries = [{ git = "https://github.com/dra11y/toms-lints" }]
+libraries = [{ path = "/Users/tom/apps/toms-lints" }]

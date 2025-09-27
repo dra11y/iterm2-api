@@ -1,0 +1,5 @@
+[env]
+DYLINT_RUSTFLAGS = "-Dwarnings -Aunknown-lints"
+
+[build]
+rustflags = ["-Dwarnings", "-Aunknown-lints"]
