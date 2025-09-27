@@ -14,7 +14,7 @@ use std::{
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 use tracing_subscriber::fmt;
-use tree_sitter::{Parser as TreeParser, Node, Query, QueryCursor, Tree};
+use tree_sitter::{Node, Parser as TreeParser, Query, QueryCursor, Tree};
 
 #[derive(Debug, Default, ValueEnum, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[clap(rename_all = "lower")]
@@ -291,7 +291,9 @@ async fn parse_python_api(source_path: &str, no_cache: bool) -> Result<PythonApi
                         parse_futures.push(tokio::spawn(async move {
                             let file_start = std::time::Instant::now();
                             let result =
-                                match parse_python_file(&file_path, &source_dir_clone, no_cache).await {
+                                match parse_python_file(&file_path, &source_dir_clone, no_cache)
+                                    .await
+                                {
                                     Ok(file_api) => Some(file_api),
                                     Err(e) => {
                                         debug!("Failed to parse {}: {}", file_name_clone, e);
@@ -314,7 +316,13 @@ async fn parse_python_api(source_path: &str, no_cache: bool) -> Result<PythonApi
         Ok(())
     }
 
-    collect_python_files(source_dir, &mut parse_futures, &mut total_files, source_dir, no_cache)?;
+    collect_python_files(
+        source_dir,
+        &mut parse_futures,
+        &mut total_files,
+        source_dir,
+        no_cache,
+    )?;
 
     // Wait for all parsing to complete
     let start_time = std::time::Instant::now();
@@ -396,9 +404,10 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path, no_cache: bool) 
 
     // Parse using tree-sitter
     let mut parser = TreeParser::new();
-    let language = tree_sitter_python::language();
-    parser.set_language(&language).map_err(|e| anyhow!("Failed to set language: {}", e))?;
-    
+    parser
+        .set_language(&tree_sitter_python::LANGUAGE.into())
+        .map_err(|e| anyhow!("Failed to set language: {}", e))?;
+
     let tree = match parser.parse(&source_code, None) {
         Some(tree) => tree,
         None => {
@@ -419,8 +428,14 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path, no_cache: bool) 
 
     // Find all class definitions
     let root_node = tree.root_node();
-    find_class_definitions(&source_code, &root_node, file_path, &mut classes, &mut enums)?;
-    
+    find_class_definitions(
+        &source_code,
+        &root_node,
+        file_path,
+        &mut classes,
+        &mut enums,
+    )?;
+
     // Find all function definitions (not inside classes)
     find_function_definitions(&source_code, &root_node, file_path, &mut functions)?;
 
@@ -449,9 +464,11 @@ fn find_class_definitions(
         match parse_class_definition(source_code, node, file_path) {
             Ok(class) => {
                 // Check if it's an enum (inherits from Enum)
-                if class.inherits.iter().any(|superclass| {
-                    superclass == "Enum" || superclass.ends_with("Enum")
-                }) {
+                if class
+                    .inherits
+                    .iter()
+                    .any(|superclass| superclass == "Enum" || superclass.ends_with("Enum"))
+                {
                     enums.push(convert_class_to_enum(class));
                 } else {
                     classes.push(class);
@@ -583,7 +600,8 @@ fn extract_superclasses(node: &Node, source_code: &str) -> Result<Vec<String>> {
                 for j in 0..child.child_count() {
                     if let Some(arg) = child.child(j) {
                         if arg.kind() == "identifier" {
-                            superclasses.push(source_code[arg.start_byte()..arg.end_byte()].to_string());
+                            superclasses
+                                .push(source_code[arg.start_byte()..arg.end_byte()].to_string());
                         }
                     }
                 }
@@ -614,7 +632,9 @@ fn find_class_members(
                                 }
                             }
                             "decorated_definition" => {
-                                if let Ok(property) = parse_property_definition(source_code, &member) {
+                                if let Ok(property) =
+                                    parse_property_definition(source_code, &member)
+                                {
                                     properties.push(property);
                                 }
                             }
@@ -630,10 +650,7 @@ fn find_class_members(
     Ok(())
 }
 
-fn parse_method_definition(
-    source_code: &str,
-    method_node: &Node,
-) -> Result<PythonMethod> {
+fn parse_method_definition(source_code: &str, method_node: &Node) -> Result<PythonMethod> {
     let name = extract_node_name(method_node, source_code)?;
     let parameters = extract_parameters_from_node(method_node, source_code);
     let is_async = is_async_function_node(method_node);
@@ -701,19 +718,23 @@ fn extract_enum_values_from_node(node: &Node, source_code: &str) -> Result<Vec<E
                     for j in 0..child.child_count() {
                         if let Some(left) = child.child(j) {
                             if left.kind() == "identifier" {
-                                let name = source_code[left.start_byte()..left.end_byte()].to_string();
-                                
+                                let name =
+                                    source_code[left.start_byte()..left.end_byte()].to_string();
+
                                 // Look for value on right side
                                 let mut value = None;
                                 for k in (j + 1)..child.child_count() {
                                     if let Some(right) = child.child(k) {
                                         if right.kind() != "operator" {
-                                            value = Some(source_code[right.start_byte()..right.end_byte()].to_string());
+                                            value = Some(
+                                                source_code[right.start_byte()..right.end_byte()]
+                                                    .to_string(),
+                                            );
                                             break;
                                         }
                                     }
                                 }
-                                
+
                                 values.push(EnumValue { name, value });
                                 break;
                             }
@@ -727,10 +748,7 @@ fn extract_enum_values_from_node(node: &Node, source_code: &str) -> Result<Vec<E
     Ok(values)
 }
 
-fn parse_property_definition(
-    source_code: &str,
-    property_node: &Node,
-) -> Result<PythonProperty> {
+fn parse_property_definition(source_code: &str, property_node: &Node) -> Result<PythonProperty> {
     let name = extract_node_name(property_node, source_code)?;
 
     Ok(PythonProperty {
@@ -745,10 +763,10 @@ fn parse_property_definition(
 fn extract_docstring_from_node(source_code: &str, node: &Node) -> Option<String> {
     // Look for string literals within the node's body
     let mut string_literals = Vec::new();
-    
+
     // Find the body block of the function/class
     let body_node = find_body_node(node);
-    
+
     if let Some(body) = body_node {
         // Look for string literals in the body
         for i in 0..body.child_count() {
@@ -765,11 +783,11 @@ fn extract_docstring_from_node(source_code: &str, node: &Node) -> Option<String>
             }
         }
     }
-    
+
     // Take the first string literal (likely the docstring)
     if let Some(string_node) = string_literals.first() {
         let string_content = &source_code[string_node.start_byte()..string_node.end_byte()];
-        
+
         // Remove quotes and clean up
         if string_content.starts_with("\"\"\"") && string_content.ends_with("\"\"\"") {
             let content = &string_content[3..string_content.len() - 3];
@@ -785,7 +803,7 @@ fn extract_docstring_from_node(source_code: &str, node: &Node) -> Option<String>
             return Some(content.trim().to_string());
         }
     }
-    
+
     None
 }
 
@@ -811,16 +829,17 @@ fn extract_parameters_from_node(node: &Node, source_code: &str) -> Vec<Parameter
                 for j in 0..child.child_count() {
                     if let Some(param) = child.child(j) {
                         if param.kind() == "identifier" {
-                            let param_name = source_code[param.start_byte()..param.end_byte()].to_string();
-                            
+                            let param_name =
+                                source_code[param.start_byte()..param.end_byte()].to_string();
+
                             // Skip 'self' and 'cls' parameters
                             if param_name == "self" || param_name == "cls" {
                                 continue;
                             }
-                            
+
                             // Look for type annotation
                             let type_hint = find_type_annotation(&param, source_code);
-                            
+
                             parameters.push(Parameter {
                                 name: param_name,
                                 type_hint,
@@ -948,15 +967,21 @@ fn execute_list_command(
     let mut filtered_classes = api.classes.clone();
 
     // Apply class filter if provided
-    eprintln!("DEBUG: Found {} classes before filtering", filtered_classes.len());
+    eprintln!(
+        "DEBUG: Found {} classes before filtering",
+        filtered_classes.len()
+    );
     for class in &filtered_classes {
         eprintln!("DEBUG: Found class: {}", class.name);
     }
-    
+
     if let Some(filter) = &class_filter {
         eprintln!("DEBUG: Applying filter: '{}'", filter);
         filtered_classes.retain(|class| class.name.to_lowercase().contains(&filter.to_lowercase()));
-        eprintln!("DEBUG: Found {} classes after filtering", filtered_classes.len());
+        eprintln!(
+            "DEBUG: Found {} classes after filtering",
+            filtered_classes.len()
+        );
     }
 
     // Sort classes by name
@@ -1208,7 +1233,11 @@ fn output_detailed_classes(classes: &[PythonClass], format: OutFormat) -> Result
                         params.join("; "),
                         method.is_async,
                         method.is_static,
-method.docstring.as_deref().unwrap_or("").replace('"', "\"\"")
+                        method
+                            .docstring
+                            .as_deref()
+                            .unwrap_or("")
+                            .replace('"', "\"\"")
                     )?;
                 }
             }
@@ -1331,7 +1360,11 @@ fn output_class_with_docs(
                 "Class,\"{}\",\"{}\",\"{}\"",
                 class.name,
                 format!("class {}({})", class.name, class.inherits.join(", ")),
-                class.docstring.as_deref().unwrap_or("").replace('"', "\"\"")
+                class
+                    .docstring
+                    .as_deref()
+                    .unwrap_or("")
+                    .replace('"', "\"\"")
             )?;
             for method in methods {
                 writeln!(
@@ -1339,7 +1372,11 @@ fn output_class_with_docs(
                     "Method,\"{}\",\"{}\",\"{}\"",
                     method.name,
                     method.signature,
-                    method.docstring.as_deref().unwrap_or("").replace('"', "\"\"")
+                    method
+                        .docstring
+                        .as_deref()
+                        .unwrap_or("")
+                        .replace('"', "\"\"")
                 )?;
             }
             String::from_utf8_lossy(&csv).to_string()
