@@ -30,8 +30,9 @@ async fn main() {
     // Configure the website crawler
     let mut website = Website::new(base_url);
     website.with_user_agent(Some("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"));
-    website.with_block_assets(true);
     website.with_respect_robots_txt(false);
+    website.with_full_resources(true);
+    website.with_block_assets(false);
     website.with_subdomains(false);
     website.with_whitelist_url(Some(
         [r#"^https://iterm2\.com/python-api/.*"#.into()].into(),
