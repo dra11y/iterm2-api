@@ -1,5 +1,5 @@
 {
-    "files.exclude": {
+    "search.exclude": {
         "**/iTerm2": true,
         "**/.git": true,
         "**/.DS_Store": true,

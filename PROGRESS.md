@@ -19,6 +19,26 @@ This document tracks the systematic development of the iTerm2 Rust API library, 
 | `Screen` | Buffer access | ❌ Missing | ❌ Missing | ❌ Missing | ❌ Missing | 0% |
 | `Tool` | Tool registration | ❌ Missing | ❌ Missing | ❌ Missing | ❌ Missing | 0% |
 
+### Python API Analysis Results (Updated 2025-09-27)
+
+**API Coverage**: 45 files analyzed, 35 classes, 149 functions, 146 total methods
+
+**Key Parameter Patterns**:
+- `connection`: 59 occurrences (most common parameter)
+- `name`: 17 occurrences
+- `callback`: 15 occurrences  
+- `session_id`: 13 occurrences
+- `key`: 11 occurrences
+
+**Type Hint Analysis**:
+- `Any`: 230 occurrences (most common type)
+- `str`: 54 occurrences
+- `iterm2.connection.Connection`: 26 occurrences
+- `Optional[str]`: 6 occurrences
+- `bool`: 5 occurrences
+
+**Critical Insight**: The `connection` parameter appears 59 times, confirming that connection management is central to the API design. This validates our approach of using `Arc<Mutex<Connection>>` for thread-safe connection sharing.
+
 ### Method Implementation Status
 
 #### Phase 1: Object-Oriented API Redesign (High Priority)
@@ -159,25 +179,49 @@ This document tracks the systematic development of the iTerm2 Rust API library, 
 - **Documentation Coverage**: 20% (1/5 core methods documented)
 - **Example Coverage**: 0% (0/8 object-oriented examples exist)
 - **Test Coverage**: 0% (0 automated tests)
-- **Python API Alignment**: 5% (basic connection + object design complete)
+- **Python API Alignment**: 15% (basic connection + object design + API analysis complete)
 - **Protobuf Integration**: 80% (identified reusable objects, designed conversion strategy)
+- **API Analysis Complete**: 100% (45 files, 35 classes, 149 functions analyzed)
 
 ## Current Focus
-**Phase 1.1**: Architecture Redesign - Currently implementing object-oriented architecture with Window, Tab, Session structs based on protobuf foundations.
+**Phase 1.1**: Architecture Redesign - Core class analysis complete. Analyzed Window, Tab, and Session Python source files to extract design patterns, method signatures, and object relationships. Ready to begin Rust implementation.
+
+## Key Analysis Findings (Updated 2025-09-27)
+
+### Design Patterns Identified
+- **Delegate Pattern**: All classes use delegates for object relationships to prevent cycles
+- **Connection Management**: Each object holds connection reference, all async operations use `self.connection`
+- **Factory Pattern**: Static methods (`async_create()`, `create_from_proto()`) for object creation
+- **Object Hierarchy**: Window → Tab → Session tree structure with bidirectional relationships
+
+### Core Method Inventory
+- **Window**: 15+ methods including `async_create_tab()`, `async_activate()`, `async_close()`, variable management
+- **Tab**: 10+ methods including `async_activate()`, `async_split_pane()`, layout management, navigation
+- **Session**: 25+ methods including `async_send_text()`, `async_split_pane()`, profile management, buffer access
+
+### Critical Implementation Requirements
+- **Thread Safety**: Use `Arc<Mutex<Connection>>` for connection sharing
+- **Memory Safety**: Use `Weak<RefCell<T>>` for object relationships to prevent cycles
+- **Error Handling**: Specific error types for each class (CreateTabException, SetPropertyException, etc.)
+- **Async Patterns**: All operations async, follow naming convention `async_operation_name()`
 
 ## Next Steps
-1. Complete Window, Tab, Session struct designs with proper relationships
-2. Implement conversion traits from protobuf to Rust structs
-3. Add thread-safe connection sharing with Arc<Mutex<>>
-4. Implement proper object relationships with weak references to prevent cycles
-5. Begin core object implementation starting with Window struct
+1. **Implement Core Object Structure**: Define Window, Tab, Session structs with basic properties and delegate system
+2. **Connection Sharing**: Implement `Arc<Mutex<Connection>>` pattern for thread-safe connection access
+3. **Factory Methods**: Create object creation methods with protobuf conversion
+4. **Basic Operations**: Implement essential methods (create, activate, close) for each class
+5. **Error Types**: Define specific error types matching Python exception hierarchy
+6. **Update Examples**: Migrate existing examples to use new object-oriented API
 
 ## Blockers
-- **Architecture Decision**: Need to finalize object relationship design (weak references vs other patterns)
-- **Safety Considerations**: Must ensure thread safety and prevent memory leaks with circular references
-- **API Compatibility**: Breaking changes required - need to plan migration strategy for existing users
+- **Delegate Implementation**: Need to design Rust equivalent of Python delegate pattern with Weak references
+- **Protobuf Integration**: Must design seamless conversion between protobuf and Rust structs
+- **Memory Management**: Complex object relationships require careful ownership design
+- **API Migration**: Breaking changes needed - plan migration strategy for existing flat API users
 
 ## Last Updated
-- Date: 2025-09-26
+- Date: 2025-09-27
 - Phase: Phase 1 (Object-Oriented API Redesign)
-- Focus: Architecture redesign and core object implementation
+- Focus: Core class analysis complete, ready for Rust implementation
+- API Analysis: Complete (45 files, 35 classes, 149 functions, 146 methods)
+- Source Analysis: Complete (Window, Tab, Session Python classes analyzed)
