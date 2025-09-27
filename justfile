@@ -7,6 +7,10 @@ fix:
     cargo dylint --all --fix -- --allow-dirty
     cargo fmt
 
+# Run the python-parser to analyze iTerm2 python API code
+python-parser *args="":
+    @RUST_LOG=error cargo run --quiet -p python-parser -- -s iTerm2/api/library/python/iterm2/ {{args}}
+
 [working-directory: 'download-docs']
 download-docs:
     cargo run
