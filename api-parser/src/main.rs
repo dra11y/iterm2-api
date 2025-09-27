@@ -46,10 +46,6 @@ struct Cli {
     /// Enable verbose logging
     #[clap(short, long)]
     verbose: bool,
-
-    /// Disable cache and force re-parsing
-    #[clap(long)]
-    no_cache: bool,
 }
 
 #[derive(Subcommand)]
@@ -203,7 +199,6 @@ struct Parameter {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    eprintln!("DEBUG: main() called");
     let cli = Cli::parse();
 
     // Initialize logging
@@ -216,7 +211,7 @@ async fn main() -> Result<()> {
     }
 
     info!("Parsing Python API from: {}", cli.source);
-    let api = parse_python_api(&cli.source, cli.no_cache).await?;
+    let api = parse_python_api(&cli.source).await?;
 
     // Handle different commands
     match cli.command {
@@ -252,7 +247,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn parse_python_api(source_path: &str, no_cache: bool) -> Result<PythonApi> {
+async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
     let source_dir = Path::new(source_path);
     if !source_dir.exists() {
         return Err(anyhow!("Source directory does not exist: {}", source_path));
@@ -271,7 +266,6 @@ async fn parse_python_api(source_path: &str, no_cache: bool) -> Result<PythonApi
         parse_futures: &mut Vec<JoinHandle<Option<FileApi>>>,
         total_files: &mut usize,
         source_dir: &Path,
-        no_cache: bool,
     ) -> Result<()> {
         for entry in read_dir(dir)? {
             let entry = entry?;
@@ -279,7 +273,7 @@ async fn parse_python_api(source_path: &str, no_cache: bool) -> Result<PythonApi
 
             if path.is_dir() {
                 // Recursively search subdirectories
-                collect_python_files(&path, parse_futures, total_files, source_dir, no_cache)?;
+                collect_python_files(&path, parse_futures, total_files, source_dir)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("py") {
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
                     if !file_name.starts_with('_') || file_name == "__init__.py" {
@@ -291,9 +285,7 @@ async fn parse_python_api(source_path: &str, no_cache: bool) -> Result<PythonApi
                         parse_futures.push(tokio::spawn(async move {
                             let file_start = std::time::Instant::now();
                             let result =
-                                match parse_python_file(&file_path, &source_dir_clone, no_cache)
-                                    .await
-                                {
+                                match parse_python_file(&file_path, &source_dir_clone).await {
                                     Ok(file_api) => Some(file_api),
                                     Err(e) => {
                                         debug!("Failed to parse {}: {}", file_name_clone, e);
@@ -316,13 +308,7 @@ async fn parse_python_api(source_path: &str, no_cache: bool) -> Result<PythonApi
         Ok(())
     }
 
-    collect_python_files(
-        source_dir,
-        &mut parse_futures,
-        &mut total_files,
-        source_dir,
-        no_cache,
-    )?;
+    collect_python_files(source_dir, &mut parse_futures, &mut total_files, source_dir)?;
 
     // Wait for all parsing to complete
     let start_time = std::time::Instant::now();
@@ -378,16 +364,8 @@ struct FileApi {
     functions: Vec<PythonFunction>,
 }
 
-async fn parse_python_file(file_path: &Path, source_dir: &Path, no_cache: bool) -> Result<FileApi> {
+async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileApi> {
     debug!("parse_python_file: {}", file_path.display());
-
-    // Try to load from cache first (unless no_cache is true)
-    if !no_cache {
-        if let Ok(cached_data) = load_from_cache(file_path, source_dir) {
-            info!("parse_python_file CACHE HIT: {}", file_path.display());
-            return Ok(cached_data);
-        }
-    }
 
     // Read the file content
     let source_code = match fs::read_to_string(file_path) {
@@ -444,11 +422,6 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path, no_cache: bool) 
         enums,
         functions,
     };
-
-    // Save to cache for future runs
-    if let Err(e) = save_to_cache(file_path, source_dir, &result) {
-        debug!("Failed to cache {}: {}", file_path.display(), e);
-    }
 
     Ok(result)
 }
@@ -953,8 +926,7 @@ fn extract_decorators_from_node(node: &Node, _source_code: &str) -> Vec<String> 
 }
 
 fn has_setter_node(node: &Node, _source_code: &str) -> bool {
-    // TODO: Implement setter detection
-    false
+    todo!("Implement setter detection")
 }
 
 // Command implementations
@@ -967,31 +939,27 @@ fn execute_list_command(
     let mut filtered_classes = api.classes.clone();
 
     // Apply class filter if provided
-    eprintln!(
-        "DEBUG: Found {} classes before filtering",
-        filtered_classes.len()
-    );
+    debug!("Found {} classes before filtering", filtered_classes.len());
     for class in &filtered_classes {
-        eprintln!("DEBUG: Found class: {}", class.name);
+        debug!("Found class: {}", class.name);
     }
 
     if let Some(filter) = &class_filter {
-        eprintln!("DEBUG: Applying filter: '{}'", filter);
+        debug!("Applying filter: '{}'", filter);
         filtered_classes.retain(|class| class.name.to_lowercase().contains(&filter.to_lowercase()));
-        eprintln!(
-            "DEBUG: Found {} classes after filtering",
-            filtered_classes.len()
-        );
+        debug!("Found {} classes after filtering", filtered_classes.len());
     }
 
     // Sort classes by name
     filtered_classes.sort_by(|a, b| a.name.cmp(&b.name));
 
-    if detailed {
-        output_detailed_classes(&filtered_classes, format)?;
+    let output = if detailed {
+        output_detailed_classes(&filtered_classes, format)?
     } else {
-        output_class_summary(&filtered_classes, format)?;
-    }
+        output_class_summary(&filtered_classes, format)?
+    };
+
+    println!("{output}");
 
     Ok(())
 }
@@ -1037,13 +1005,15 @@ fn execute_query_command(
     // Sort methods by name
     methods.sort_by(|a, b| a.name.cmp(&b.name));
 
-    if signatures_only {
-        output_method_signatures(&class.name, &methods, format)?;
+    let output = if signatures_only {
+        output_method_signatures(&class.name, &methods, format)?
     } else if show_docs {
-        output_class_with_docs(class, &methods, format)?;
+        output_class_with_docs(class, &methods, format)?
     } else {
-        output_class_methods(&class.name, &methods, format)?;
-    }
+        output_class_methods(&class.name, &methods, format)?
+    };
+
+    println!("{output}");
 
     Ok(())
 }
@@ -1079,22 +1049,24 @@ fn execute_functions_command(
     // Sort functions by name
     functions.sort_by(|a, b| a.name.cmp(&b.name));
 
-    output_functions(&functions, format)?;
+    let output = output_functions(&functions, format)?;
+
+    println!("{output}");
+
     Ok(())
 }
 
-fn generate_stats(api: &PythonApi, detailed: bool) -> Result<()> {
+fn generate_stats(api: &PythonApi, detailed: bool) -> Result<String> {
     let stats = if detailed {
         generate_detailed_stats(api)?
     } else {
         generate_simple_stats(api)?
     };
 
-    println!("{stats}");
-    Ok(())
+    Ok(stats)
 }
 
-fn extract_api_structure(api: &PythonApi, full: bool) -> Result<()> {
+fn extract_api_structure(api: &PythonApi, full: bool) -> Result<String> {
     let structure = if full {
         serde_json::to_string_pretty(api)?
     } else {
@@ -1108,13 +1080,12 @@ fn extract_api_structure(api: &PythonApi, full: bool) -> Result<()> {
         serde_json::to_string_pretty(&simplified)?
     };
 
-    println!("{structure}");
-    Ok(())
+    Ok(structure)
 }
 
 // Output functions for different commands
-fn output_class_summary(classes: &[PythonClass], format: OutFormat) -> Result<()> {
-    let output = match format {
+fn output_class_summary(classes: &[PythonClass], format: OutFormat) -> Result<String> {
+    let class_summary = match format {
         OutFormat::Json => {
             let summary: Vec<_> = classes
                 .iter()
@@ -1174,12 +1145,11 @@ fn output_class_summary(classes: &[PythonClass], format: OutFormat) -> Result<()
         }
     };
 
-    println!("{output}");
-    Ok(())
+    Ok(class_summary)
 }
 
-fn output_detailed_classes(classes: &[PythonClass], format: OutFormat) -> Result<()> {
-    let output = match format {
+fn output_detailed_classes(classes: &[PythonClass], format: OutFormat) -> Result<String> {
+    let detailed_classes = match format {
         OutFormat::Json => serde_json::to_string_pretty(classes)?,
         OutFormat::Markdown => {
             let mut md = Vec::new();
@@ -1245,16 +1215,15 @@ fn output_detailed_classes(classes: &[PythonClass], format: OutFormat) -> Result
         }
     };
 
-    println!("{output}");
-    Ok(())
+    Ok(detailed_classes)
 }
 
 fn output_method_signatures(
     class_name: &str,
     methods: &[PythonMethod],
     format: OutFormat,
-) -> Result<()> {
-    let output = match format {
+) -> Result<String> {
+    let method_signatures = match format {
         OutFormat::Json => {
             let signatures: Vec<_> = methods.iter().map(|m| m.signature.clone()).collect();
             serde_json::to_string_pretty(&signatures)?
@@ -1285,15 +1254,14 @@ fn output_method_signatures(
         }
     };
 
-    println!("{output}");
-    Ok(())
+    Ok(method_signatures)
 }
 
 fn output_class_with_docs(
     class: &PythonClass,
     methods: &[PythonMethod],
     format: OutFormat,
-) -> Result<()> {
+) -> Result<String> {
     let output = match format {
         OutFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
             "class": {
@@ -1383,15 +1351,14 @@ fn output_class_with_docs(
         }
     };
 
-    println!("{output}");
-    Ok(())
+    Ok(output)
 }
 
 fn output_class_methods(
     class_name: &str,
     methods: &[PythonMethod],
     format: OutFormat,
-) -> Result<()> {
+) -> Result<String> {
     let output = match format {
         OutFormat::Json => serde_json::to_string_pretty(methods)?,
         OutFormat::Csv => {
@@ -1435,11 +1402,10 @@ fn output_class_methods(
         }
     };
 
-    println!("{output}");
-    Ok(())
+    Ok(output)
 }
 
-fn output_functions(functions: &[PythonFunction], format: OutFormat) -> Result<()> {
+fn output_functions(functions: &[PythonFunction], format: OutFormat) -> Result<String> {
     let output = match format {
         OutFormat::Json => serde_json::to_string_pretty(functions)?,
         OutFormat::Csv => {
@@ -1482,8 +1448,7 @@ fn output_functions(functions: &[PythonFunction], format: OutFormat) -> Result<(
         }
     };
 
-    println!("{output}");
-    Ok(())
+    Ok(output)
 }
 
 fn generate_simple_stats(api: &PythonApi) -> Result<String> {
@@ -1732,92 +1697,4 @@ fn categorize_methods(methods: &[PythonMethod]) -> Vec<(String, usize)> {
     let mut result: Vec<_> = categories.into_iter().collect();
     result.sort_by(|a, b| b.1.cmp(&a.1));
     result
-}
-
-// fn show_summary(api: &PythonApi) {
-//     println!("📊 iTerm2 Python API Summary");
-//     println!("═══════════════════════════");
-//     println!("📁 Total Files: {}", api.metadata.total_files);
-//     println!("🏗️  Total Classes: {}", api.metadata.total_classes);
-//     println!("⚙️  Total Functions: {}", api.metadata.total_functions);
-//     println!("🔢 Total Enums: {}", api.metadata.total_enums);
-//     println!();
-
-//     // Key classes
-//     let key_classes = ["App", "Window", "Tab", "Session"];
-//     println!("🎯 Key Classes:");
-//     for class_name in &key_classes {
-//         if let Some(class) = api.classes.iter().find(|c| c.name == *class_name && !c.file_path.contains("mainmenu.py")) {
-//             println!("  • {}: {} methods", class.name, class.methods.len());
-//         }
-//     }
-//     println!();
-
-//     // Method statistics
-//     let total_methods: usize = api.classes.iter().map(|c| c.methods.len()).sum();
-//     let async_methods: usize = api
-//         .classes
-//         .iter()
-//         .flat_map(|c| c.methods.iter())
-//         .filter(|m| m.is_async)
-//         .count();
-
-//     println!("📈 Method Statistics:");
-//     println!("  • Total Methods: {}", total_methods);
-//     println!("  • Async Methods: {}", async_methods);
-//     println!("  • Sync Methods: {}", total_methods - async_methods);
-//     println!();
-
-//     println!("💡 Use 'python-parser --help' to see available commands");
-// }
-
-// Cache functions
-fn get_cache_path(file_path: &Path, source_dir: &Path) -> Result<PathBuf> {
-    let cache_dir = Path::new(".cache");
-    fs::create_dir_all(cache_dir)?;
-
-    // Get relative path from source directory
-    let relative_path = match file_path.strip_prefix(source_dir) {
-        Ok(path) => path,
-        Err(_) => Path::new(
-            file_path
-                .file_name()
-                .unwrap_or_else(|| std::ffi::OsStr::new("unknown")),
-        ),
-    };
-
-    let cache_file_path = cache_dir.join(relative_path).with_extension("json");
-
-    // Create parent directories if needed
-    if let Some(parent) = cache_file_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    Ok(cache_file_path)
-}
-
-fn load_from_cache(file_path: &Path, source_dir: &Path) -> Result<FileApi> {
-    let cache_path = get_cache_path(file_path, source_dir)?;
-
-    if !cache_path.exists() {
-        return Err(anyhow!("Cache file does not exist"));
-    }
-
-    let cached_content = fs::read_to_string(cache_path)?;
-    let cached_data: FileApi = serde_json::from_str(&cached_content)?;
-
-    Ok(cached_data)
-}
-
-fn save_to_cache(file_path: &Path, source_dir: &Path, data: &FileApi) -> Result<()> {
-    let cache_path = get_cache_path(file_path, source_dir)?;
-
-    debug!("Saving cache to: {:?}", cache_path);
-
-    let json_content = serde_json::to_string_pretty(data)?;
-    fs::write(cache_path, json_content)?;
-
-    debug!("Cache saved successfully");
-
-    Ok(())
 }
