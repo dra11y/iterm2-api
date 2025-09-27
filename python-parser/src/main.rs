@@ -1,6 +1,8 @@
+#![allow(unused)]
+
 use anyhow::{Result, anyhow};
 use chrono::{self, Utc};
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -28,36 +30,90 @@ enum OutFormat {
 #[derive(Parser)]
 #[command(
     name = "python-parser",
-    about = "Extracts iTerm2 Python API structure from source code"
+    about = "Extracts and queries iTerm2 Python API structure from source code",
+    version = "0.1.0"
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
     /// Path to Python source directory
-    #[arg(short, long)]
+    #[clap(short, long, default_value = "iTerm2/api/library/python/iterm2")]
     source: String,
 
-    /// Query mode: filter classes and methods
-    #[arg(short, long)]
-    query: Option<String>,
-
-    /// Filter by class name (comma-separated)
-    #[arg(short, long)]
-    class: Option<String>,
-
-    /// Filter by method name pattern
-    #[arg(short, long)]
-    method: Option<String>,
-
-    /// Filter by parameter name
-    #[arg(short, long)]
-    parameter: Option<String>,
-
     /// Export format (json, csv, markdown)
-    #[arg(short, long, default_value = "json")]
+    #[clap(short, long, default_value = "json")]
     format: OutFormat,
 
-    /// Generate progress report for PROGRESS.md
-    #[arg(long)]
-    progress: bool,
+    /// Enable verbose logging
+    #[clap(short, long)]
+    verbose: bool,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// List all classes and their methods
+    List {
+        /// Filter by class name pattern
+        #[clap(short, long)]
+        class: Option<String>,
+
+        /// Show detailed information including docstrings
+        #[clap(long)]
+        detailed: bool,
+    },
+
+    /// Query specific classes and their methods
+    Query {
+        /// Class name to query (required)
+        #[clap(short, long)]
+        class: String,
+
+        /// Filter methods by name pattern
+        #[clap(short, long)]
+        method: Option<String>,
+
+        /// Filter by parameter name
+        #[clap(long)]
+        parameter: Option<String>,
+
+        /// Show method signatures only
+        #[clap(long)]
+        signatures: bool,
+
+        /// Show full docstrings
+        #[clap(long)]
+        docs: bool,
+    },
+
+    /// Search for functions across all modules
+    Functions {
+        /// Filter by function name pattern
+        #[clap(short, long)]
+        name: Option<String>,
+
+        /// Filter by parameter name
+        #[clap(long)]
+        parameter: Option<String>,
+
+        /// Show async functions only
+        #[clap(long)]
+        async_only: bool,
+    },
+
+    /// Show API statistics
+    Stats {
+        /// Include detailed method analysis
+        #[clap(long)]
+        detailed: bool,
+    },
+
+    /// Extract API structure to stdout
+    Extract {
+        /// Include enums and functions
+        #[clap(long)]
+        full: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,20 +201,49 @@ struct Parameter {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    fmt::init();
-
     let cli = Cli::parse();
+
+    // Initialize logging
+    if cli.verbose {
+        fmt::init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .init();
+    }
 
     info!("Parsing Python API from: {}", cli.source);
     let api = parse_python_api(&cli.source).await?;
 
-    // Handle different output modes
-    if cli.progress {
-        generate_progress_report(&api)?;
-    } else if let Some(query) = &cli.query {
-        execute_query(&api, query)?;
-    } else {
-        show_summary(&api);
+    // Handle different commands
+    match cli.command {
+        Commands::List { class, detailed } => {
+            execute_list_command(&api, class, detailed, cli.format)?;
+        }
+        Commands::Query {
+            class,
+            method,
+            parameter,
+            signatures,
+            docs,
+        } => {
+            execute_query_command(
+                &api, &class, method, parameter, signatures, docs, cli.format,
+            )?;
+        }
+        Commands::Functions {
+            name,
+            parameter,
+            async_only,
+        } => {
+            execute_functions_command(&api, name, parameter, async_only, cli.format)?;
+        }
+        Commands::Stats { detailed } => {
+            generate_stats(&api, detailed)?;
+        }
+        Commands::Extract { full } => {
+            extract_api_structure(&api, full)?;
+        }
     }
 
     Ok(())
@@ -205,13 +290,13 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
                                 match parse_python_file(&file_path, &source_dir_clone).await {
                                     Ok(file_api) => Some(file_api),
                                     Err(e) => {
-                                        warn!("Failed to parse {}: {}", file_name_clone, e);
+                                        debug!("Failed to parse {}: {}", file_name_clone, e);
                                         None
                                     }
                                 };
                             let file_duration = file_start.elapsed();
                             if file_duration.as_millis() > 100 {
-                                warn!(
+                                debug!(
                                     "Slow file parse: {} took {:?}",
                                     file_name_clone, file_duration
                                 );
@@ -229,10 +314,10 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
 
     // Wait for all parsing to complete
     let start_time = std::time::Instant::now();
-    warn!("Waiting for parsing...");
+    debug!("Waiting for parsing...");
     let results = join_all(parse_futures).await;
     let join_duration = start_time.elapsed();
-    warn!("Parsing complete! join_all took: {:?}", join_duration);
+    debug!("Parsing complete! join_all took: {:?}", join_duration);
 
     for result in results {
         match result {
@@ -242,14 +327,14 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
                 functions.extend(file_api.functions);
             }
             Ok(None) => {
-                warn!("File parsing failed");
+                debug!("File parsing failed");
                 // File parsing failed, already logged in the task
             }
             Err(join_error) => {
                 if join_error.is_panic() {
-                    warn!("Task panicked");
+                    debug!("Task panicked");
                 } else {
-                    warn!("Task failed: {}", join_error);
+                    debug!("Task failed: {}", join_error);
                 }
             }
         }
@@ -282,7 +367,7 @@ struct FileApi {
 }
 
 async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileApi> {
-    warn!("parse_python_file: {}", file_path.display());
+    debug!("parse_python_file: {}", file_path.display());
     let file_str = file_path.to_string_lossy().to_string();
 
     // Try to load from cache first
@@ -295,7 +380,7 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
     let parsed_file = match parse_file(&file_str, Language::Python).await {
         Ok(parsed) => parsed,
         Err(e) => {
-            warn!("Failed to parse file {}: {}", file_path.display(), e);
+            debug!("Failed to parse file {}: {}", file_path.display(), e);
             return Ok(FileApi {
                 classes: Vec::new(),
                 enums: Vec::new(),
@@ -316,7 +401,7 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
         if let Some(_class_name) = &class_construct.name {
             match parse_class_definition(&parsed_file, &class_construct, file_path) {
                 Ok(class) => classes.push(class),
-                Err(e) => warn!(
+                Err(e) => debug!(
                     "Failed to parse class definition in {}: {}",
                     file_path.display(),
                     e
@@ -334,7 +419,7 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
                 Ok(false) => {
                     match parse_function_definition(&parsed_file, &func_construct, file_path) {
                         Ok(func) => functions.push(func),
-                        Err(e) => warn!(
+                        Err(e) => debug!(
                             "Failed to parse function definition in {}: {}",
                             file_path.display(),
                             e
@@ -342,7 +427,7 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
                     }
                 }
                 Ok(true) => {} // Function is inside a class, skip
-                Err(e) => warn!(
+                Err(e) => debug!(
                     "Failed to check if function is inside class in {}: {}",
                     file_path.display(),
                     e
@@ -370,7 +455,7 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
                                     file_path,
                                 ) {
                                     Ok(enum_def) => enums.push(enum_def),
-                                    Err(e) => warn!(
+                                    Err(e) => debug!(
                                         "Failed to parse enum definition in {}: {}",
                                         file_path.display(),
                                         e
@@ -379,7 +464,7 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
                             }
                         }
                         Ok(None) => {} // No superclasses
-                        Err(e) => warn!(
+                        Err(e) => debug!(
                             "Failed to find superclasses in {}: {}",
                             file_path.display(),
                             e
@@ -389,7 +474,7 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
             }
         }
         Ok(false) => {} // No Enum import
-        Err(e) => warn!(
+        Err(e) => debug!(
             "Failed to check for Enum import in {}: {}",
             file_path.display(),
             e
@@ -404,7 +489,7 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
 
     // Save to cache for future runs
     if let Err(e) = save_to_cache(file_path, source_dir, &result) {
-        warn!("Failed to cache {}: {}", file_path.display(), e);
+        debug!("Failed to cache {}: {}", file_path.display(), e);
     }
 
     Ok(result)
@@ -423,7 +508,7 @@ fn parse_class_definition(
     match find_superclasses(parsed_file, class_construct) {
         Ok(Some(superclasses)) => inherits = superclasses,
         Ok(None) => {} // No superclasses
-        Err(e) => warn!("Failed to find superclasses for class: {}", e),
+        Err(e) => debug!("Failed to find superclasses for class: {}", e),
     }
 
     // Find methods inside this class - simpler approach
@@ -433,7 +518,7 @@ fn parse_class_definition(
             if let Some(_method_name) = &func_construct.name {
                 match parse_method_definition(parsed_file, &func_construct) {
                     Ok(method) => methods.push(method),
-                    Err(e) => warn!("Failed to parse method definition: {}", e),
+                    Err(e) => debug!("Failed to parse method definition: {}", e),
                 }
             }
         }
@@ -448,12 +533,12 @@ fn parse_class_definition(
                     if let Some(_property_name) = &decorated_construct.name {
                         match parse_property_definition(parsed_file, &decorated_construct) {
                             Ok(property) => properties.push(property),
-                            Err(e) => warn!("Failed to parse property definition: {}", e),
+                            Err(e) => debug!("Failed to parse property definition: {}", e),
                         }
                     }
                 }
                 Ok(false) => {} // Not a property decorator
-                Err(e) => warn!("Failed to check if decorated definition is property: {}", e),
+                Err(e) => debug!("Failed to check if decorated definition is property: {}", e),
             }
         }
     }
@@ -523,7 +608,7 @@ fn parse_enum_definition(
     let values = match extract_enum_values(parsed_file, enum_construct) {
         Ok(values) => values,
         Err(e) => {
-            warn!("Failed to extract enum values: {}", e);
+            debug!("Failed to extract enum values: {}", e);
             Vec::new()
         }
     };
@@ -998,231 +1083,602 @@ fn is_within_construct(
     inner_start >= outer_start && inner_end <= outer_end
 }
 
-// Query and export functions
-fn execute_query(api: &PythonApi, _query: &str) -> Result<()> {
-    let cli = Cli::parse();
-
+// Command implementations
+fn execute_list_command(
+    api: &PythonApi,
+    class_filter: Option<String>,
+    detailed: bool,
+    format: OutFormat,
+) -> Result<()> {
     let mut filtered_classes = api.classes.clone();
 
-    // Apply class filter
-    if let Some(class_filter) = &cli.class {
-        let class_names: Vec<&str> = class_filter.split(',').map(|s| s.trim()).collect();
-        filtered_classes.retain(|class| {
-            class_names
-                .iter()
-                .any(|&name| class.name.to_lowercase().contains(&name.to_lowercase()))
-        });
+    // Apply class filter if provided
+    if let Some(filter) = &class_filter {
+        filtered_classes.retain(|class| class.name.to_lowercase().contains(&filter.to_lowercase()));
     }
 
-    // Apply method filter
-    if let Some(method_filter) = &cli.method {
-        for class in &mut filtered_classes {
-            class.methods.retain(|method| {
-                method
-                    .name
-                    .to_lowercase()
-                    .contains(&method_filter.to_lowercase())
-            });
-        }
-        // Also filter standalone functions
-        let mut filtered_functions = api.functions.clone();
-        filtered_functions.retain(|func| {
-            func.name
-                .to_lowercase()
-                .contains(&method_filter.to_lowercase())
-        });
+    // Sort classes by name
+    filtered_classes.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // Create filtered API
-        let filtered_api = PythonApi {
-            classes: filtered_classes,
-            enums: api.enums.clone(),
-            functions: filtered_functions,
-            metadata: api.metadata.clone(),
-        };
-
-        output_filtered_api(&filtered_api, cli.format)?;
-        return Ok(());
+    if detailed {
+        output_detailed_classes(&filtered_classes, format)?;
+    } else {
+        output_class_summary(&filtered_classes, format)?;
     }
 
-    // Apply parameter filter
-    if let Some(param_filter) = &cli.parameter {
-        for class in &mut filtered_classes {
-            class.methods.retain(|method| {
-                method.parameters.iter().any(|param| {
-                    param
-                        .name
-                        .to_lowercase()
-                        .contains(&param_filter.to_lowercase())
-                })
-            });
-        }
-        // Remove classes with no methods after filtering
-        filtered_classes.retain(|class| !class.methods.is_empty());
-    }
-
-    // Create filtered API
-    let filtered_api = PythonApi {
-        classes: filtered_classes,
-        enums: api.enums.clone(),
-        functions: api.functions.clone(), // Keep all functions unless specifically filtered
-        metadata: api.metadata.clone(),
-    };
-
-    output_filtered_api(&filtered_api, cli.format)?;
     Ok(())
 }
 
-fn output_filtered_api(api: &PythonApi, format: OutFormat) -> Result<()> {
+fn execute_query_command(
+    api: &PythonApi,
+    class_name: &str,
+    method_filter: Option<String>,
+    parameter_filter: Option<String>,
+    signatures_only: bool,
+    show_docs: bool,
+    format: OutFormat,
+) -> Result<()> {
+    // Find the specific class, excluding enum classes from mainmenu.py
+    let class = api
+        .classes
+        .iter()
+        .filter(|c| {
+            c.name.to_lowercase() == class_name.to_lowercase() &&
+            // Exclude classes from mainmenu.py (these are menu identifiers, not API classes)
+            !c.file_path.contains("mainmenu.py")
+        })
+        .next()
+        .ok_or_else(|| anyhow!("Class '{}' not found", class_name))?;
+
+    let mut methods = class.methods.clone();
+
+    // Apply method filter if provided
+    if let Some(filter) = &method_filter {
+        methods.retain(|method| method.name.to_lowercase().contains(&filter.to_lowercase()));
+    }
+
+    // Apply parameter filter if provided
+    if let Some(filter) = &parameter_filter {
+        methods.retain(|method| {
+            method
+                .parameters
+                .iter()
+                .any(|param| param.name.to_lowercase().contains(&filter.to_lowercase()))
+        });
+    }
+
+    // Sort methods by name
+    methods.sort_by(|a, b| a.name.cmp(&b.name));
+
+    if signatures_only {
+        output_method_signatures(&class.name, &methods, format)?;
+    } else if show_docs {
+        output_class_with_docs(class, &methods, format)?;
+    } else {
+        output_class_methods(&class.name, &methods, format)?;
+    }
+
+    Ok(())
+}
+
+fn execute_functions_command(
+    api: &PythonApi,
+    name_filter: Option<String>,
+    parameter_filter: Option<String>,
+    async_only: bool,
+    format: OutFormat,
+) -> Result<()> {
+    let mut functions = api.functions.clone();
+
+    // Apply name filter if provided
+    if let Some(filter) = &name_filter {
+        functions.retain(|func| func.name.to_lowercase().contains(&filter.to_lowercase()));
+    }
+
+    // Apply async filter if provided
+    if async_only {
+        functions.retain(|func| func.is_async);
+    }
+
+    // Apply parameter filter if provided
+    if let Some(filter) = &parameter_filter {
+        functions.retain(|func| {
+            func.parameters
+                .iter()
+                .any(|param| param.name.to_lowercase().contains(&filter.to_lowercase()))
+        });
+    }
+
+    // Sort functions by name
+    functions.sort_by(|a, b| a.name.cmp(&b.name));
+
+    output_functions(&functions, format)?;
+    Ok(())
+}
+
+fn generate_stats(api: &PythonApi, detailed: bool) -> Result<()> {
+    let stats = if detailed {
+        generate_detailed_stats(api)?
+    } else {
+        generate_simple_stats(api)?
+    };
+
+    println!("{stats}");
+    Ok(())
+}
+
+fn extract_api_structure(api: &PythonApi, full: bool) -> Result<()> {
+    let structure = if full {
+        serde_json::to_string_pretty(api)?
+    } else {
+        // Extract only classes and methods for basic structure
+        let simplified = PythonApi {
+            classes: api.classes.clone(),
+            enums: Vec::new(),     // Skip enums in basic mode
+            functions: Vec::new(), // Skip functions in basic mode
+            metadata: api.metadata.clone(),
+        };
+        serde_json::to_string_pretty(&simplified)?
+    };
+
+    println!("{structure}");
+    Ok(())
+}
+
+// Output functions for different commands
+fn output_class_summary(classes: &[PythonClass], format: OutFormat) -> Result<()> {
     let output = match format {
-        OutFormat::Json => serde_json::to_string_pretty(api)?,
-        OutFormat::Csv => to_csv(api)?,
-        OutFormat::Markdown => to_markdown(api)?,
+        OutFormat::Json => {
+            let summary: Vec<_> = classes
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "name": c.name,
+                        "methods": c.methods.len(),
+                        "file": c.file_path,
+                        "line": c.line_number,
+                        "inherits": c.inherits,
+                        "is_exception": c.is_exception,
+                        "is_abstract": c.is_abstract,
+                    })
+                })
+                .collect();
+            serde_json::to_string_pretty(&summary)?
+        }
+        OutFormat::Csv => {
+            let mut csv = Vec::new();
+            writeln!(csv, "Class,Methods,File,Line,Inherits,Exception,Abstract")?;
+            for class in classes {
+                writeln!(
+                    csv,
+                    "{},{},{},{},{},{},{}",
+                    class.name,
+                    class.methods.len(),
+                    class.file_path,
+                    class.line_number.unwrap_or(0),
+                    class.inherits.join(";"),
+                    class.is_exception,
+                    class.is_abstract
+                )?;
+            }
+            String::from_utf8_lossy(&csv).to_string()
+        }
+        OutFormat::Markdown => {
+            let mut md = Vec::new();
+            writeln!(md, "# iTerm2 API Classes\n")?;
+            writeln!(md, "| Class | Methods | File | Line | Inherits |")?;
+            writeln!(md, "|-------|---------|------|------|----------|")?;
+            for class in classes {
+                writeln!(
+                    md,
+                    "| `{}` | {} | `{}` | {} | {} |",
+                    class.name,
+                    class.methods.len(),
+                    class.file_path,
+                    class.line_number.unwrap_or(0),
+                    if class.inherits.is_empty() {
+                        "-".to_string()
+                    } else {
+                        class.inherits.join(", ")
+                    }
+                )?;
+            }
+            String::from_utf8_lossy(&md).to_string()
+        }
     };
 
     println!("{output}");
-
     Ok(())
 }
 
-fn to_csv(api: &PythonApi) -> Result<String> {
-    let mut csv = Vec::new();
-
-    // Write CSV header
-    writeln!(csv, "Type,Name,File,Method,Parameters,IsAsync,IsStatic")?;
-
-    // Export classes and methods
-    for class in &api.classes {
-        for method in &class.methods {
-            let params: Vec<String> = method
-                .parameters
-                .iter()
-                .map(|p| format!("{}: {}", p.name, p.type_hint))
-                .collect();
-            writeln!(
-                csv,
-                "Class,{},\"{}\",{},\"{}\",{},{}",
-                class.name,
-                class.file_path,
-                method.name,
-                params.join("; "),
-                method.is_async,
-                method.is_static
-            )?;
-        }
-    }
-
-    // Export functions
-    for func in &api.functions {
-        let params: Vec<String> = func
-            .parameters
-            .iter()
-            .map(|p| format!("{}: {}", p.name, p.type_hint))
-            .collect();
-        writeln!(
-            csv,
-            "Function,{},\"{}\",,\"{}\",{},",
-            func.name,
-            func.file_path,
-            params.join("; "),
-            func.is_async
-        )?;
-    }
-
-    Ok(String::from_utf8_lossy(&csv).to_string())
-}
-
-fn to_markdown(api: &PythonApi) -> Result<String> {
-    let mut md = Vec::new();
-
-    writeln!(md, "# iTerm2 Python API Reference\n")?;
-    writeln!(md, "Generated on: {}\n", api.metadata.extraction_timestamp)?;
-    writeln!(md, "- **Total Files**: {}", api.metadata.total_files)?;
-    writeln!(md, "- **Total Classes**: {}", api.metadata.total_classes)?;
-    writeln!(
-        md,
-        "- **Total Functions**: {}",
-        api.metadata.total_functions
-    )?;
-    writeln!(md, "- **Total Enums**: {}\n", api.metadata.total_enums)?;
-
-    // Export classes
-    for class in &api.classes {
-        writeln!(md, "## Class: `{}`\n", class.name)?;
-        writeln!(md, "**File**: `{}`", class.file_path)?;
-        if !class.inherits.is_empty() {
-            writeln!(md, "**Inherits**: {}", class.inherits.join(", "))?;
-        }
-        writeln!(md, "**Line**: {}", class.line_number.unwrap_or(0))?;
-        writeln!(md, "**Methods**: {}\n", class.methods.len())?;
-
-        if !class.methods.is_empty() {
-            writeln!(md, "### Methods\n")?;
-            for method in &class.methods {
-                writeln!(md, "#### `{}`", method.signature)?;
-                if method.is_async {
-                    writeln!(md, "- **Async**: Yes")?;
+fn output_detailed_classes(classes: &[PythonClass], format: OutFormat) -> Result<()> {
+    let output = match format {
+        OutFormat::Json => serde_json::to_string_pretty(classes)?,
+        OutFormat::Markdown => {
+            let mut md = Vec::new();
+            writeln!(md, "# iTerm2 API Classes (Detailed)\n")?;
+            for class in classes {
+                writeln!(md, "## Class: `{}`\n", class.name)?;
+                writeln!(md, "**File**: `{}`", class.file_path)?;
+                writeln!(md, "**Line**: {}", class.line_number.unwrap_or(0))?;
+                if !class.inherits.is_empty() {
+                    writeln!(md, "**Inherits**: {}", class.inherits.join(", "))?;
                 }
-                if method.is_static {
-                    writeln!(md, "- **Static**: Yes")?;
-                }
-                if !method.parameters.is_empty() {
-                    writeln!(md, "- **Parameters**:")?;
-                    for param in &method.parameters {
-                        writeln!(md, "  - `{}`: `{}`", param.name, param.type_hint)?;
+                writeln!(md, "**Methods**: {}\n", class.methods.len())?;
+
+                if !class.methods.is_empty() {
+                    writeln!(md, "### Methods\n")?;
+                    for method in &class.methods {
+                        writeln!(md, "- `{}`", method.signature)?;
+                        if !method.docstring.is_empty() {
+                            let doc_preview = method.docstring.lines().next().unwrap_or("");
+                            if !doc_preview.is_empty() {
+                                writeln!(md, "  - *{}*", doc_preview)?;
+                            }
+                        }
                     }
-                }
-                if !method.returns.is_empty() && method.returns != "Any" {
-                    writeln!(md, "- **Returns**: `{}`", method.returns)?;
                 }
                 writeln!(md)?;
             }
+            String::from_utf8_lossy(&md).to_string()
         }
-    }
-
-    // Export functions
-    if !api.functions.is_empty() {
-        writeln!(md, "## Functions\n")?;
-        for func in &api.functions {
-            writeln!(md, "### `{}`\n", func.signature)?;
-            writeln!(md, "**File**: `{}`", func.file_path)?;
-            if func.is_async {
-                writeln!(md, "- **Async**: Yes")?;
-            }
-            if !func.parameters.is_empty() {
-                writeln!(md, "- **Parameters**:")?;
-                for param in &func.parameters {
-                    writeln!(md, "  - `{}`: `{}`", param.name, param.type_hint)?;
+        OutFormat::Csv => {
+            let mut csv = Vec::new();
+            writeln!(
+                csv,
+                "Class,Method,Signature,Parameters,Async,Static,Docstring"
+            )?;
+            for class in classes {
+                for method in &class.methods {
+                    let params: Vec<String> = method
+                        .parameters
+                        .iter()
+                        .map(|p| format!("{}: {}", p.name, p.type_hint))
+                        .collect();
+                    writeln!(
+                        csv,
+                        "\"{}\",\"{}\",\"{}\",\"{}\",{},{},\"{}\"",
+                        class.name,
+                        method.name,
+                        method.signature,
+                        params.join("; "),
+                        method.is_async,
+                        method.is_static,
+                        method.docstring.replace("\"", "\"\"")
+                    )?;
                 }
             }
-            if !func.returns.is_empty() && func.returns != "Any" {
-                writeln!(md, "- **Returns**: `{}`", func.returns)?;
-            }
-            writeln!(md)?;
+            String::from_utf8_lossy(&csv).to_string()
         }
-    }
+    };
 
-    Ok(String::from_utf8_lossy(&md).to_string())
+    println!("{output}");
+    Ok(())
 }
 
-fn generate_progress_report(api: &PythonApi) -> Result<String> {
-    let mut report = Vec::new();
+fn output_method_signatures(
+    class_name: &str,
+    methods: &[PythonMethod],
+    format: OutFormat,
+) -> Result<()> {
+    let output = match format {
+        OutFormat::Json => {
+            let signatures: Vec<_> = methods.iter().map(|m| m.signature.clone()).collect();
+            serde_json::to_string_pretty(&signatures)?
+        }
+        OutFormat::Csv => {
+            let mut csv = Vec::new();
+            writeln!(csv, "Signature")?;
+            for method in methods {
+                writeln!(csv, "\"{}\"", method.signature)?;
+            }
+            String::from_utf8_lossy(&csv).to_string()
+        }
+        OutFormat::Markdown => {
+            let mut md = Vec::new();
+            writeln!(md, "# `{}` Method Signatures\n", class_name)?;
+            for method in methods {
+                writeln!(md, "```python\n{}\n```", method.signature)?;
+                if !method.docstring.is_empty() {
+                    let doc_preview = method.docstring.lines().next().unwrap_or("");
+                    if !doc_preview.is_empty() {
+                        writeln!(md, "*{}*\n", doc_preview)?;
+                    }
+                }
+            }
+            String::from_utf8_lossy(&md).to_string()
+        }
+    };
 
-    writeln!(report, "# iTerm2 Python API Analysis Report\n")?;
+    println!("{output}");
+    Ok(())
+}
+
+fn output_class_with_docs(
+    class: &PythonClass,
+    methods: &[PythonMethod],
+    format: OutFormat,
+) -> Result<()> {
+    let output = match format {
+        OutFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "class": {
+                "name": class.name,
+                "file": class.file_path,
+                "line": class.line_number,
+                "inherits": class.inherits,
+                "docstring": class.docstring,
+                "methods": methods,
+            }
+        }))?,
+        OutFormat::Markdown => {
+            let mut md = Vec::new();
+            writeln!(md, "# Class: `{}`\n", class.name)?;
+            writeln!(md, "**File**: `{}`", class.file_path)?;
+            writeln!(md, "**Line**: {}", class.line_number.unwrap_or(0))?;
+            if !class.inherits.is_empty() {
+                writeln!(md, "**Inherits**: {}", class.inherits.join(", "))?;
+            }
+            writeln!(md)?;
+
+            if !class.docstring.is_empty() {
+                writeln!(md, "## Class Documentation\n")?;
+                writeln!(md, "{}\n", class.docstring)?;
+            }
+
+            if !methods.is_empty() {
+                writeln!(md, "## Methods\n")?;
+                for method in methods {
+                    writeln!(md, "### `{}`\n", method.signature)?;
+                    if method.is_async {
+                        writeln!(md, "**Async**: Yes\n")?;
+                    }
+                    if method.is_static {
+                        writeln!(md, "**Static**: Yes\n")?;
+                    }
+                    if !method.parameters.is_empty() {
+                        writeln!(md, "**Parameters**:\n")?;
+                        for param in &method.parameters {
+                            writeln!(md, "- `{}`: `{}`", param.name, param.type_hint)?;
+                        }
+                        writeln!(md)?;
+                    }
+                    if !method.returns.is_empty() && method.returns != "Any" {
+                        writeln!(md, "**Returns**: `{}`\n", method.returns)?;
+                    }
+                    if !method.docstring.is_empty() {
+                        writeln!(md, "**Documentation**:\n")?;
+                        writeln!(md, "{}\n", method.docstring)?;
+                    }
+                }
+            }
+            String::from_utf8_lossy(&md).to_string()
+        }
+        OutFormat::Csv => {
+            let mut csv = Vec::new();
+            writeln!(csv, "Type,Name,Signature,Documentation")?;
+            writeln!(
+                csv,
+                "Class,\"{}\",\"{}\",\"{}\"",
+                class.name,
+                format!("class {}({})", class.name, class.inherits.join(", ")),
+                class.docstring.replace("\"", "\"\"")
+            )?;
+            for method in methods {
+                writeln!(
+                    csv,
+                    "Method,\"{}\",\"{}\",\"{}\"",
+                    method.name,
+                    method.signature,
+                    method.docstring.replace("\"", "\"\"")
+                )?;
+            }
+            String::from_utf8_lossy(&csv).to_string()
+        }
+    };
+
+    println!("{output}");
+    Ok(())
+}
+
+fn output_class_methods(
+    class_name: &str,
+    methods: &[PythonMethod],
+    format: OutFormat,
+) -> Result<()> {
+    let output = match format {
+        OutFormat::Json => serde_json::to_string_pretty(methods)?,
+        OutFormat::Csv => {
+            let mut csv = Vec::new();
+            writeln!(csv, "Class,Method,Signature,Parameters,Async,Static")?;
+            for method in methods {
+                let params: Vec<String> = method
+                    .parameters
+                    .iter()
+                    .map(|p| format!("{}: {}", p.name, p.type_hint))
+                    .collect();
+                writeln!(
+                    csv,
+                    "\"{}\",\"{}\",\"{}\",\"{}\",{},{}",
+                    class_name,
+                    method.name,
+                    method.signature,
+                    params.join("; "),
+                    method.is_async,
+                    method.is_static
+                )?;
+            }
+            String::from_utf8_lossy(&csv).to_string()
+        }
+        OutFormat::Markdown => {
+            let mut md = Vec::new();
+            writeln!(md, "# `{}` Methods\n", class_name)?;
+            writeln!(md, "| Method | Signature | Async | Static |")?;
+            writeln!(md, "|--------|-----------|-------|--------|")?;
+            for method in methods {
+                writeln!(
+                    md,
+                    "| `{}` | `{}` | {} | {} |",
+                    method.name,
+                    method.signature.replace("|", "\\|"),
+                    if method.is_async { "✓" } else { "" },
+                    if method.is_static { "✓" } else { "" }
+                )?;
+            }
+            String::from_utf8_lossy(&md).to_string()
+        }
+    };
+
+    println!("{output}");
+    Ok(())
+}
+
+fn output_functions(functions: &[PythonFunction], format: OutFormat) -> Result<()> {
+    let output = match format {
+        OutFormat::Json => serde_json::to_string_pretty(functions)?,
+        OutFormat::Csv => {
+            let mut csv = Vec::new();
+            writeln!(csv, "Function,File,Signature,Parameters,Async")?;
+            for func in functions {
+                let params: Vec<String> = func
+                    .parameters
+                    .iter()
+                    .map(|p| format!("{}: {}", p.name, p.type_hint))
+                    .collect();
+                writeln!(
+                    csv,
+                    "\"{}\",\"{}\",\"{}\",\"{}\",{}",
+                    func.name,
+                    func.file_path,
+                    func.signature,
+                    params.join("; "),
+                    func.is_async
+                )?;
+            }
+            String::from_utf8_lossy(&csv).to_string()
+        }
+        OutFormat::Markdown => {
+            let mut md = Vec::new();
+            writeln!(md, "# Functions\n")?;
+            writeln!(md, "| Function | File | Signature | Async |")?;
+            writeln!(md, "|----------|------|-----------|-------|")?;
+            for func in functions {
+                writeln!(
+                    md,
+                    "| `{}` | `{}` | `{}` | {} |",
+                    func.name,
+                    func.file_path,
+                    func.signature.replace("|", "\\|"),
+                    if func.is_async { "✓" } else { "" }
+                )?;
+            }
+            String::from_utf8_lossy(&md).to_string()
+        }
+    };
+
+    println!("{output}");
+    Ok(())
+}
+
+fn generate_simple_stats(api: &PythonApi) -> Result<String> {
+    let mut output = Vec::new();
+
+    writeln!(output, "# iTerm2 Python API Stats\n")?;
     writeln!(
-        report,
+        output,
         "Generated on: {}\n",
         api.metadata.extraction_timestamp
     )?;
 
+    // Overall statistics
+    writeln!(output, "## Overall Statistics\n")?;
+    writeln!(output, "- **Total Files**: {}", api.metadata.total_files)?;
+    writeln!(
+        output,
+        "- **Total Classes**: {}",
+        api.metadata.total_classes
+    )?;
+    writeln!(
+        output,
+        "- **Total Functions**: {}",
+        api.metadata.total_functions
+    )?;
+    writeln!(output, "- **Total Enums**: {}", api.metadata.total_enums)?;
+    writeln!(output)?;
+
     // Key classes analysis
     let key_classes = ["App", "Window", "Tab", "Session"];
-    writeln!(report, "## Key Classes Analysis\n")?;
+    writeln!(output, "## Key Classes Analysis\n")?;
 
     for class_name in &key_classes {
-        if let Some(class) = api.classes.iter().find(|c| c.name == *class_name) {
-            writeln!(report, "### `{}`\n", class.name)?;
-            writeln!(report, "- **Total Methods**: {}", class.methods.len())?;
-            writeln!(report, "- **File**: `{}`", class.file_path)?;
+        if let Some(class) = api
+            .classes
+            .iter()
+            .find(|c| c.name == *class_name && !c.file_path.contains("mainmenu.py"))
+        {
+            writeln!(output, "### `{}`\n", class.name)?;
+            writeln!(output, "- **Total Methods**: {}", class.methods.len())?;
+            writeln!(output, "- **File**: `{}`", class.file_path)?;
+
+            // Method analysis
+            let async_methods = class.methods.iter().filter(|m| m.is_async).count();
+            let static_methods = class.methods.iter().filter(|m| m.is_static).count();
+
+            writeln!(output, "- **Async Methods**: {}", async_methods)?;
+            writeln!(output, "- **Static Methods**: {}", static_methods)?;
+
+            // Sample methods
+            if !class.methods.is_empty() {
+                writeln!(output, "- **Sample Methods**:")?;
+                for method in class.methods.iter().take(5) {
+                    writeln!(output, "  - `{}`", method.signature)?;
+                }
+            }
+            writeln!(output)?;
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&output).to_string())
+}
+
+fn generate_detailed_stats(api: &PythonApi) -> Result<String> {
+    let mut output = Vec::new();
+
+    writeln!(output, "# iTerm2 Python API Detailed Stats\n")?;
+    writeln!(
+        output,
+        "Generated on: {}\n",
+        api.metadata.extraction_timestamp
+    )?;
+
+    // Overall statistics
+    writeln!(output, "## Overall Statistics\n")?;
+    writeln!(output, "- **Total Files**: {}", api.metadata.total_files)?;
+    writeln!(
+        output,
+        "- **Total Classes**: {}",
+        api.metadata.total_classes
+    )?;
+    writeln!(
+        output,
+        "- **Total Functions**: {}",
+        api.metadata.total_functions
+    )?;
+    writeln!(output, "- **Total Enums**: {}", api.metadata.total_enums)?;
+    writeln!(output)?;
+
+    // Key classes analysis
+    let key_classes = ["App", "Window", "Tab", "Session"];
+    writeln!(output, "## Key Classes Analysis\n")?;
+
+    for class_name in &key_classes {
+        if let Some(class) = api
+            .classes
+            .iter()
+            .find(|c| c.name == *class_name && !c.file_path.contains("mainmenu.py"))
+        {
+            writeln!(output, "### `{}`\n", class.name)?;
+            writeln!(output, "- **Total Methods**: {}", class.methods.len())?;
+            writeln!(output, "- **File**: `{}`", class.file_path)?;
 
             // Method analysis
             let async_methods = class.methods.iter().filter(|m| m.is_async).count();
@@ -1233,27 +1689,34 @@ fn generate_progress_report(api: &PythonApi) -> Result<String> {
                 .filter(|m| !m.parameters.is_empty())
                 .count();
 
-            writeln!(report, "- **Async Methods**: {}", async_methods)?;
-            writeln!(report, "- **Static Methods**: {}", static_methods)?;
+            writeln!(output, "- **Async Methods**: {}", async_methods)?;
+            writeln!(output, "- **Static Methods**: {}", static_methods)?;
             writeln!(
-                report,
+                output,
                 "- **Methods with Parameters**: {}",
                 methods_with_params
             )?;
 
+            // Method categorization
+            writeln!(output, "- **Method Categories**:")?;
+            let method_categories = categorize_methods(&class.methods);
+            for (category, count) in method_categories {
+                writeln!(output, "  - {}: {}", category, count)?;
+            }
+
             // Sample methods
             if !class.methods.is_empty() {
-                writeln!(report, "- **Sample Methods**:")?;
-                for method in class.methods.iter().take(3) {
-                    writeln!(report, "  - `{}`", method.signature)?;
+                writeln!(output, "- **Sample Methods**:")?;
+                for method in class.methods.iter().take(5) {
+                    writeln!(output, "  - `{}`", method.signature)?;
                 }
             }
-            writeln!(report)?;
+            writeln!(output)?;
         }
     }
 
     // Parameter frequency analysis
-    writeln!(report, "## Parameter Frequency Analysis\n")?;
+    writeln!(output, "## Parameter Frequency Analysis\n")?;
     let mut param_counts = std::collections::HashMap::new();
 
     for class in &api.classes {
@@ -1273,14 +1736,14 @@ fn generate_progress_report(api: &PythonApi) -> Result<String> {
     let mut sorted_params: Vec<_> = param_counts.into_iter().collect();
     sorted_params.sort_by(|a, b| b.1.cmp(&a.1));
 
-    writeln!(report, "| Parameter | Count |")?;
-    writeln!(report, "|-----------|-------|")?;
-    for (param, count) in sorted_params.iter().take(10) {
-        writeln!(report, "| `{}` | {} |", param, count)?;
+    writeln!(output, "| Parameter | Count |")?;
+    writeln!(output, "|-----------|-------|")?;
+    for (param, count) in sorted_params.iter().take(15) {
+        writeln!(output, "| `{}` | {} |", param, count)?;
     }
 
     // Type analysis
-    writeln!(report, "\n## Type Hint Analysis\n")?;
+    writeln!(output, "\n## Type Hint Analysis\n")?;
     let mut type_counts = std::collections::HashMap::new();
 
     for class in &api.classes {
@@ -1300,53 +1763,106 @@ fn generate_progress_report(api: &PythonApi) -> Result<String> {
     let mut sorted_types: Vec<_> = type_counts.into_iter().collect();
     sorted_types.sort_by(|a, b| b.1.cmp(&a.1));
 
-    writeln!(report, "| Type | Count |")?;
-    writeln!(report, "|------|-------|")?;
-    for (type_hint, count) in sorted_types.iter().take(10) {
-        writeln!(report, "`{}` | {} |", type_hint, count)?;
+    writeln!(output, "| Type | Count |")?;
+    writeln!(output, "|------|-------|")?;
+    for (type_hint, count) in sorted_types.iter().take(15) {
+        writeln!(output, "`{}` | {} |", type_hint, count)?;
     }
 
-    info!("Progress report generated: PROGRESS_UPDATE.md");
+    // API coverage matrix
+    writeln!(output, "\n## API Coverage Matrix\n")?;
+    writeln!(output, "| Class | Methods | Properties | Status |")?;
+    writeln!(output, "|-------|---------|------------|--------|")?;
 
-    Ok(String::from_utf8_lossy(&report).to_string())
-}
-
-fn show_summary(api: &PythonApi) {
-    println!("📊 iTerm2 Python API Summary");
-    println!("═══════════════════════════");
-    println!("📁 Total Files: {}", api.metadata.total_files);
-    println!("🏗️  Total Classes: {}", api.metadata.total_classes);
-    println!("⚙️  Total Functions: {}", api.metadata.total_functions);
-    println!("🔢 Total Enums: {}", api.metadata.total_enums);
-    println!();
-
-    // Key classes
-    let key_classes = ["App", "Window", "Tab", "Session"];
-    println!("🎯 Key Classes:");
     for class_name in &key_classes {
-        if let Some(class) = api.classes.iter().find(|c| c.name == *class_name) {
-            println!("  • {}: {} methods", class.name, class.methods.len());
+        if let Some(class) = api
+            .classes
+            .iter()
+            .find(|c| c.name == *class_name && !c.file_path.contains("mainmenu.py"))
+        {
+            let status = if class.methods.len() > 10 {
+                "✅ Well-covered"
+            } else if class.methods.len() > 5 {
+                "⚠️  Partially covered"
+            } else {
+                "❌ Needs investigation"
+            };
+            writeln!(
+                output,
+                "| `{}` | {} | {} | {} |",
+                class.name,
+                class.methods.len(),
+                class.properties.len(),
+                status
+            )?;
         }
     }
-    println!();
 
-    // Method statistics
-    let total_methods: usize = api.classes.iter().map(|c| c.methods.len()).sum();
-    let async_methods: usize = api
-        .classes
-        .iter()
-        .flat_map(|c| c.methods.iter())
-        .filter(|m| m.is_async)
-        .count();
-
-    println!("📈 Method Statistics:");
-    println!("  • Total Methods: {}", total_methods);
-    println!("  • Async Methods: {}", async_methods);
-    println!("  • Sync Methods: {}", total_methods - async_methods);
-    println!();
-
-    println!("💡 Use --help to see query and export options");
+    Ok(String::from_utf8_lossy(&output).to_string())
 }
+
+fn categorize_methods(methods: &[PythonMethod]) -> Vec<(String, usize)> {
+    let mut categories = std::collections::HashMap::new();
+
+    for method in methods {
+        let category = if method.name.starts_with("get_") || method.name.starts_with("is_") {
+            "Getter"
+        } else if method.name.starts_with("set_") {
+            "Setter"
+        } else if method.name.contains("create") || method.name.contains("new") {
+            "Factory"
+        } else if method.name.contains("async") && method.is_async {
+            "Async Operation"
+        } else if method.is_static {
+            "Static Utility"
+        } else {
+            "General Method"
+        };
+
+        *categories.entry(category.to_string()).or_insert(0) += 1;
+    }
+
+    let mut result: Vec<_> = categories.into_iter().collect();
+    result.sort_by(|a, b| b.1.cmp(&a.1));
+    result
+}
+
+// fn show_summary(api: &PythonApi) {
+//     println!("📊 iTerm2 Python API Summary");
+//     println!("═══════════════════════════");
+//     println!("📁 Total Files: {}", api.metadata.total_files);
+//     println!("🏗️  Total Classes: {}", api.metadata.total_classes);
+//     println!("⚙️  Total Functions: {}", api.metadata.total_functions);
+//     println!("🔢 Total Enums: {}", api.metadata.total_enums);
+//     println!();
+
+//     // Key classes
+//     let key_classes = ["App", "Window", "Tab", "Session"];
+//     println!("🎯 Key Classes:");
+//     for class_name in &key_classes {
+//         if let Some(class) = api.classes.iter().find(|c| c.name == *class_name && !c.file_path.contains("mainmenu.py")) {
+//             println!("  • {}: {} methods", class.name, class.methods.len());
+//         }
+//     }
+//     println!();
+
+//     // Method statistics
+//     let total_methods: usize = api.classes.iter().map(|c| c.methods.len()).sum();
+//     let async_methods: usize = api
+//         .classes
+//         .iter()
+//         .flat_map(|c| c.methods.iter())
+//         .filter(|m| m.is_async)
+//         .count();
+
+//     println!("📈 Method Statistics:");
+//     println!("  • Total Methods: {}", total_methods);
+//     println!("  • Async Methods: {}", async_methods);
+//     println!("  • Sync Methods: {}", total_methods - async_methods);
+//     println!();
+
+//     println!("💡 Use 'python-parser --help' to see available commands");
+// }
 
 // Cache functions
 fn get_cache_path(file_path: &Path, source_dir: &Path) -> Result<PathBuf> {
@@ -1389,12 +1905,12 @@ fn load_from_cache(file_path: &Path, source_dir: &Path) -> Result<FileApi> {
 fn save_to_cache(file_path: &Path, source_dir: &Path, data: &FileApi) -> Result<()> {
     let cache_path = get_cache_path(file_path, source_dir)?;
 
-    warn!("Saving cache to: {:?}", cache_path);
+    debug!("Saving cache to: {:?}", cache_path);
 
     let json_content = serde_json::to_string_pretty(data)?;
     fs::write(cache_path, json_content)?;
 
-    warn!("Cache saved successfully");
+    debug!("Cache saved successfully");
 
     Ok(())
 }
