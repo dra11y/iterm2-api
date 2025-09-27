@@ -3,7 +3,12 @@ use chrono::{self, Utc};
 use clap::{Parser, ValueEnum};
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
-use std::{fs::read_dir, io::Write, path::Path};
+use std::{
+    fs,
+    fs::read_dir,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 use tracing_subscriber::fmt;
@@ -177,6 +182,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
         dir: &Path,
         parse_futures: &mut Vec<JoinHandle<Option<FileApi>>>,
         total_files: &mut usize,
+        source_dir: &Path,
     ) -> Result<()> {
         for entry in read_dir(dir)? {
             let entry = entry?;
@@ -184,7 +190,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
 
             if path.is_dir() {
                 // Recursively search subdirectories
-                collect_python_files(&path, parse_futures, total_files)?;
+                collect_python_files(&path, parse_futures, total_files, source_dir)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("py") {
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
                     if !file_name.starts_with('_') || file_name == "__init__.py" {
@@ -192,14 +198,25 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
                         let file_path = path.clone();
                         let file_name_clone = file_name.to_string();
                         info!("Parsing file: {}", file_path.display());
+                        let source_dir_clone = source_dir.to_path_buf();
                         parse_futures.push(tokio::spawn(async move {
-                            match parse_python_file(&file_path).await {
-                                Ok(file_api) => Some(file_api),
-                                Err(e) => {
-                                    warn!("Failed to parse {}: {}", file_name_clone, e);
-                                    None
-                                }
+                            let file_start = std::time::Instant::now();
+                            let result =
+                                match parse_python_file(&file_path, &source_dir_clone).await {
+                                    Ok(file_api) => Some(file_api),
+                                    Err(e) => {
+                                        warn!("Failed to parse {}: {}", file_name_clone, e);
+                                        None
+                                    }
+                                };
+                            let file_duration = file_start.elapsed();
+                            if file_duration.as_millis() > 100 {
+                                warn!(
+                                    "Slow file parse: {} took {:?}",
+                                    file_name_clone, file_duration
+                                );
                             }
+                            result
                         }));
                     }
                 }
@@ -208,12 +225,14 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
         Ok(())
     }
 
-    collect_python_files(source_dir, &mut parse_futures, &mut total_files)?;
+    collect_python_files(source_dir, &mut parse_futures, &mut total_files, source_dir)?;
 
     // Wait for all parsing to complete
+    let start_time = std::time::Instant::now();
     warn!("Waiting for parsing...");
     let results = join_all(parse_futures).await;
-    warn!("Parsing complete!");
+    let join_duration = start_time.elapsed();
+    warn!("Parsing complete! join_all took: {:?}", join_duration);
 
     for result in results {
         match result {
@@ -262,9 +281,15 @@ struct FileApi {
     functions: Vec<PythonFunction>,
 }
 
-async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
+async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileApi> {
     warn!("parse_python_file: {}", file_path.display());
     let file_str = file_path.to_string_lossy().to_string();
+
+    // Try to load from cache first
+    if let Ok(cached_data) = load_from_cache(file_path, source_dir) {
+        info!("parse_python_file CACHE HIT: {}", file_path.display());
+        return Ok(cached_data);
+    }
 
     // Parse the Python file using tree-parser
     let parsed_file = match parse_file(&file_str, Language::Python).await {
@@ -278,6 +303,8 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
             });
         }
     };
+
+    info!("parse_python_file SUCCESS: {}", file_path.display());
 
     let mut classes = Vec::new();
     let mut enums = Vec::new();
@@ -369,11 +396,18 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
         ),
     }
 
-    Ok(FileApi {
+    let result = FileApi {
         classes,
         enums,
         functions,
-    })
+    };
+
+    // Save to cache for future runs
+    if let Err(e) = save_to_cache(file_path, source_dir, &result) {
+        warn!("Failed to cache {}: {}", file_path.display(), e);
+    }
+
+    Ok(result)
 }
 
 fn parse_class_definition(
@@ -1312,4 +1346,55 @@ fn show_summary(api: &PythonApi) {
     println!();
 
     println!("💡 Use --help to see query and export options");
+}
+
+// Cache functions
+fn get_cache_path(file_path: &Path, source_dir: &Path) -> Result<PathBuf> {
+    let cache_dir = Path::new(".cache");
+    fs::create_dir_all(cache_dir)?;
+
+    // Get relative path from source directory
+    let relative_path = match file_path.strip_prefix(source_dir) {
+        Ok(path) => path,
+        Err(_) => Path::new(
+            file_path
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("unknown")),
+        ),
+    };
+
+    let cache_file_path = cache_dir.join(relative_path).with_extension("json");
+
+    // Create parent directories if needed
+    if let Some(parent) = cache_file_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    Ok(cache_file_path)
+}
+
+fn load_from_cache(file_path: &Path, source_dir: &Path) -> Result<FileApi> {
+    let cache_path = get_cache_path(file_path, source_dir)?;
+
+    if !cache_path.exists() {
+        return Err(anyhow!("Cache file does not exist"));
+    }
+
+    let cached_content = fs::read_to_string(cache_path)?;
+    let cached_data: FileApi = serde_json::from_str(&cached_content)?;
+
+    Ok(cached_data)
+}
+
+fn save_to_cache(file_path: &Path, source_dir: &Path, data: &FileApi) -> Result<()> {
+    let cache_path = get_cache_path(file_path, source_dir)?;
+
+    warn!("Saving cache to: {:?}", cache_path);
+
+    let json_content = serde_json::to_string_pretty(data)?;
+    fs::write(cache_path, json_content)?;
+
+    warn!("Cache saved successfully");
+
+    Ok(())
 }
