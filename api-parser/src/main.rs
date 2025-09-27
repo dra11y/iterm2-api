@@ -14,9 +14,7 @@ use std::{
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 use tracing_subscriber::fmt;
-use tree_parser::{
-    CodeConstruct, Language, ParsedFile, parse_file, search_by_node_type, search_by_query,
-};
+use tree_sitter::{Parser as TreeParser, Node, Query, QueryCursor, Tree};
 
 #[derive(Debug, Default, ValueEnum, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[clap(rename_all = "lower")]
@@ -48,6 +46,10 @@ struct Cli {
     /// Enable verbose logging
     #[clap(short, long)]
     verbose: bool,
+
+    /// Disable cache and force re-parsing
+    #[clap(long)]
+    no_cache: bool,
 }
 
 #[derive(Subcommand)]
@@ -138,7 +140,7 @@ struct ApiMetadata {
 struct PythonClass {
     name: String,
     file_path: String,
-    docstring: String,
+    docstring: Option<String>,
     methods: Vec<PythonMethod>,
     properties: Vec<PythonProperty>,
     inherits: Vec<String>,
@@ -151,7 +153,7 @@ struct PythonClass {
 struct PythonMethod {
     name: String,
     signature: String,
-    docstring: String,
+    docstring: Option<String>,
     parameters: Vec<Parameter>,
     returns: String,
     is_async: bool,
@@ -163,7 +165,7 @@ struct PythonMethod {
 struct PythonProperty {
     name: String,
     type_hint: String,
-    docstring: String,
+    docstring: Option<String>,
     is_readonly: bool,
 }
 
@@ -171,7 +173,7 @@ struct PythonProperty {
 struct PythonEnum {
     name: String,
     file_path: String,
-    docstring: String,
+    docstring: Option<String>,
     values: Vec<EnumValue>,
 }
 
@@ -186,7 +188,7 @@ struct PythonFunction {
     name: String,
     file_path: String,
     signature: String,
-    docstring: String,
+    docstring: Option<String>,
     parameters: Vec<Parameter>,
     returns: String,
     is_async: bool,
@@ -201,6 +203,7 @@ struct Parameter {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    eprintln!("DEBUG: main() called");
     let cli = Cli::parse();
 
     // Initialize logging
@@ -213,7 +216,7 @@ async fn main() -> Result<()> {
     }
 
     info!("Parsing Python API from: {}", cli.source);
-    let api = parse_python_api(&cli.source).await?;
+    let api = parse_python_api(&cli.source, cli.no_cache).await?;
 
     // Handle different commands
     match cli.command {
@@ -249,7 +252,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
+async fn parse_python_api(source_path: &str, no_cache: bool) -> Result<PythonApi> {
     let source_dir = Path::new(source_path);
     if !source_dir.exists() {
         return Err(anyhow!("Source directory does not exist: {}", source_path));
@@ -268,6 +271,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
         parse_futures: &mut Vec<JoinHandle<Option<FileApi>>>,
         total_files: &mut usize,
         source_dir: &Path,
+        no_cache: bool,
     ) -> Result<()> {
         for entry in read_dir(dir)? {
             let entry = entry?;
@@ -275,7 +279,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
 
             if path.is_dir() {
                 // Recursively search subdirectories
-                collect_python_files(&path, parse_futures, total_files, source_dir)?;
+                collect_python_files(&path, parse_futures, total_files, source_dir, no_cache)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("py") {
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
                     if !file_name.starts_with('_') || file_name == "__init__.py" {
@@ -287,7 +291,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
                         parse_futures.push(tokio::spawn(async move {
                             let file_start = std::time::Instant::now();
                             let result =
-                                match parse_python_file(&file_path, &source_dir_clone).await {
+                                match parse_python_file(&file_path, &source_dir_clone, no_cache).await {
                                     Ok(file_api) => Some(file_api),
                                     Err(e) => {
                                         debug!("Failed to parse {}: {}", file_name_clone, e);
@@ -310,7 +314,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
         Ok(())
     }
 
-    collect_python_files(source_dir, &mut parse_futures, &mut total_files, source_dir)?;
+    collect_python_files(source_dir, &mut parse_futures, &mut total_files, source_dir, no_cache)?;
 
     // Wait for all parsing to complete
     let start_time = std::time::Instant::now();
@@ -366,21 +370,39 @@ struct FileApi {
     functions: Vec<PythonFunction>,
 }
 
-async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileApi> {
+async fn parse_python_file(file_path: &Path, source_dir: &Path, no_cache: bool) -> Result<FileApi> {
     debug!("parse_python_file: {}", file_path.display());
-    let file_str = file_path.to_string_lossy().to_string();
 
-    // Try to load from cache first
-    if let Ok(cached_data) = load_from_cache(file_path, source_dir) {
-        info!("parse_python_file CACHE HIT: {}", file_path.display());
-        return Ok(cached_data);
+    // Try to load from cache first (unless no_cache is true)
+    if !no_cache {
+        if let Ok(cached_data) = load_from_cache(file_path, source_dir) {
+            info!("parse_python_file CACHE HIT: {}", file_path.display());
+            return Ok(cached_data);
+        }
     }
 
-    // Parse the Python file using tree-parser
-    let parsed_file = match parse_file(&file_str, Language::Python).await {
-        Ok(parsed) => parsed,
+    // Read the file content
+    let source_code = match fs::read_to_string(file_path) {
+        Ok(content) => content,
         Err(e) => {
-            debug!("Failed to parse file {}: {}", file_path.display(), e);
+            debug!("Failed to read file {}: {}", file_path.display(), e);
+            return Ok(FileApi {
+                classes: Vec::new(),
+                enums: Vec::new(),
+                functions: Vec::new(),
+            });
+        }
+    };
+
+    // Parse using tree-sitter
+    let mut parser = TreeParser::new();
+    let language = tree_sitter_python::language();
+    parser.set_language(&language).map_err(|e| anyhow!("Failed to set language: {}", e))?;
+    
+    let tree = match parser.parse(&source_code, None) {
+        Some(tree) => tree,
+        None => {
+            debug!("Failed to parse file {}: syntax error", file_path.display());
             return Ok(FileApi {
                 classes: Vec::new(),
                 enums: Vec::new(),
@@ -396,90 +418,11 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
     let mut functions = Vec::new();
 
     // Find all class definitions
-    let class_constructs = search_by_node_type(&parsed_file, "class_definition", None);
-    for class_construct in class_constructs {
-        if let Some(_class_name) = &class_construct.name {
-            match parse_class_definition(&parsed_file, &class_construct, file_path) {
-                Ok(class) => classes.push(class),
-                Err(e) => debug!(
-                    "Failed to parse class definition in {}: {}",
-                    file_path.display(),
-                    e
-                ),
-            }
-        }
-    }
-
+    let root_node = tree.root_node();
+    find_class_definitions(&source_code, &root_node, file_path, &mut classes, &mut enums)?;
+    
     // Find all function definitions (not inside classes)
-    let function_constructs = search_by_node_type(&parsed_file, "function_definition", None);
-    for func_construct in function_constructs {
-        if let Some(_func_name) = &func_construct.name {
-            // Check if this function is not inside a class
-            match is_inside_class(&parsed_file, &func_construct) {
-                Ok(false) => {
-                    match parse_function_definition(&parsed_file, &func_construct, file_path) {
-                        Ok(func) => functions.push(func),
-                        Err(e) => debug!(
-                            "Failed to parse function definition in {}: {}",
-                            file_path.display(),
-                            e
-                        ),
-                    }
-                }
-                Ok(true) => {} // Function is inside a class, skip
-                Err(e) => debug!(
-                    "Failed to check if function is inside class in {}: {}",
-                    file_path.display(),
-                    e
-                ),
-            }
-        }
-    }
-
-    // Find all enum definitions (Python enums are typically classes inheriting from Enum)
-    // First check if Enum is imported in this file
-    match inherits_from_enum(&parsed_file) {
-        Ok(true) => {
-            let all_class_constructs = search_by_node_type(&parsed_file, "class_definition", None);
-            for class_construct in all_class_constructs {
-                if let Some(_class_name) = &class_construct.name {
-                    // Check if it inherits from Enum
-                    match find_superclasses(&parsed_file, &class_construct) {
-                        Ok(Some(superclasses)) => {
-                            if superclasses.iter().any(|superclass| {
-                                superclass == "Enum" || superclass.ends_with("Enum")
-                            }) {
-                                match parse_enum_definition(
-                                    &parsed_file,
-                                    &class_construct,
-                                    file_path,
-                                ) {
-                                    Ok(enum_def) => enums.push(enum_def),
-                                    Err(e) => debug!(
-                                        "Failed to parse enum definition in {}: {}",
-                                        file_path.display(),
-                                        e
-                                    ),
-                                }
-                            }
-                        }
-                        Ok(None) => {} // No superclasses
-                        Err(e) => debug!(
-                            "Failed to find superclasses in {}: {}",
-                            file_path.display(),
-                            e
-                        ),
-                    }
-                }
-            }
-        }
-        Ok(false) => {} // No Enum import
-        Err(e) => debug!(
-            "Failed to check for Enum import in {}: {}",
-            file_path.display(),
-            e
-        ),
-    }
+    find_function_definitions(&source_code, &root_node, file_path, &mut functions)?;
 
     let result = FileApi {
         classes,
@@ -495,86 +438,214 @@ async fn parse_python_file(file_path: &Path, source_dir: &Path) -> Result<FileAp
     Ok(result)
 }
 
+fn find_class_definitions(
+    source_code: &str,
+    node: &Node,
+    file_path: &Path,
+    classes: &mut Vec<PythonClass>,
+    enums: &mut Vec<PythonEnum>,
+) -> Result<()> {
+    if node.kind() == "class_definition" {
+        match parse_class_definition(source_code, node, file_path) {
+            Ok(class) => {
+                // Check if it's an enum (inherits from Enum)
+                if class.inherits.iter().any(|superclass| {
+                    superclass == "Enum" || superclass.ends_with("Enum")
+                }) {
+                    enums.push(convert_class_to_enum(class));
+                } else {
+                    classes.push(class);
+                }
+            }
+            Err(e) => debug!(
+                "Failed to parse class definition in {}: {}",
+                file_path.display(),
+                e
+            ),
+        }
+    }
+
+    // Recursively search child nodes
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            find_class_definitions(source_code, &child, file_path, classes, enums)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn find_function_definitions(
+    source_code: &str,
+    node: &Node,
+    file_path: &Path,
+    functions: &mut Vec<PythonFunction>,
+) -> Result<()> {
+    if node.kind() == "function_definition" {
+        // Check if this function is not inside a class
+        if !is_inside_class_node(node) {
+            match parse_function_definition(source_code, node, file_path) {
+                Ok(func) => functions.push(func),
+                Err(e) => debug!(
+                    "Failed to parse function definition in {}: {}",
+                    file_path.display(),
+                    e
+                ),
+            }
+        }
+    }
+
+    // Recursively search child nodes
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            find_function_definitions(source_code, &child, file_path, functions)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn is_inside_class_node(node: &Node) -> bool {
+    let mut parent = node.parent();
+    while let Some(current) = parent {
+        if current.kind() == "class_definition" {
+            return true;
+        }
+        parent = current.parent();
+    }
+    false
+}
+
+fn convert_class_to_enum(class: PythonClass) -> PythonEnum {
+    PythonEnum {
+        name: class.name,
+        file_path: class.file_path,
+        docstring: class.docstring,
+        values: Vec::new(), // TODO: Extract enum values
+    }
+}
+
 fn parse_class_definition(
-    parsed_file: &ParsedFile,
-    class_construct: &CodeConstruct,
+    source_code: &str,
+    class_node: &Node,
     file_path: &Path,
 ) -> Result<PythonClass> {
     let mut methods = Vec::new();
     let mut properties = Vec::new();
     let mut inherits = Vec::new();
 
+    // Extract class name
+    let name = extract_node_name(class_node, source_code)?;
+
     // Extract inheritance
-    match find_superclasses(parsed_file, class_construct) {
-        Ok(Some(superclasses)) => inherits = superclasses,
-        Ok(None) => {} // No superclasses
-        Err(e) => debug!("Failed to find superclasses for class: {}", e),
-    }
+    inherits = extract_superclasses(class_node, source_code)?;
 
-    // Find methods inside this class - simpler approach
-    let all_function_constructs = search_by_node_type(parsed_file, "function_definition", None);
-    for func_construct in all_function_constructs {
-        if is_within_construct(parsed_file, &func_construct, class_construct) {
-            if let Some(_method_name) = &func_construct.name {
-                match parse_method_definition(parsed_file, &func_construct) {
-                    Ok(method) => methods.push(method),
-                    Err(e) => debug!("Failed to parse method definition: {}", e),
-                }
-            }
-        }
-    }
-
-    // Find properties (decorated with @property) - simpler approach
-    let all_decorated_constructs = search_by_node_type(parsed_file, "decorated_definition", None);
-    for decorated_construct in all_decorated_constructs {
-        if is_within_construct(parsed_file, &decorated_construct, class_construct) {
-            match is_property_decorator(parsed_file, &decorated_construct) {
-                Ok(true) => {
-                    if let Some(_property_name) = &decorated_construct.name {
-                        match parse_property_definition(parsed_file, &decorated_construct) {
-                            Ok(property) => properties.push(property),
-                            Err(e) => debug!("Failed to parse property definition: {}", e),
-                        }
-                    }
-                }
-                Ok(false) => {} // Not a property decorator
-                Err(e) => debug!("Failed to check if decorated definition is property: {}", e),
-            }
-        }
-    }
+    // Find methods and properties inside this class
+    find_class_members(source_code, class_node, &mut methods, &mut properties)?;
 
     let is_exception = inherits.contains(&"Exception".to_string());
     let is_abstract =
         inherits.contains(&"ABC".to_string()) || inherits.iter().any(|s| s.contains("Abstract"));
 
     Ok(PythonClass {
-        name: class_construct.name.clone().unwrap_or_default(),
+        name,
         file_path: file_path.to_string_lossy().to_string(),
-        docstring: extract_docstring(parsed_file, class_construct),
+        docstring: extract_docstring_from_node(source_code, class_node),
         methods,
         properties,
         inherits,
-        line_number: Some(class_construct.start_line as u32),
+        line_number: Some((class_node.start_position().row + 1).try_into().unwrap()),
         is_exception,
         is_abstract,
     })
 }
 
+fn extract_node_name(node: &Node, source_code: &str) -> Result<String> {
+    // Find the identifier child node
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "identifier" {
+                return Ok(source_code[child.start_byte()..child.end_byte()].to_string());
+            }
+        }
+    }
+    Err(anyhow!("Could not extract name from node"))
+}
+
+fn extract_superclasses(node: &Node, source_code: &str) -> Result<Vec<String>> {
+    let mut superclasses = Vec::new();
+
+    // Look for argument_list node (superclasses)
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "argument_list" {
+                // Extract identifiers from argument list
+                for j in 0..child.child_count() {
+                    if let Some(arg) = child.child(j) {
+                        if arg.kind() == "identifier" {
+                            superclasses.push(source_code[arg.start_byte()..arg.end_byte()].to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(superclasses)
+}
+
+fn find_class_members(
+    source_code: &str,
+    class_node: &Node,
+    methods: &mut Vec<PythonMethod>,
+    properties: &mut Vec<PythonProperty>,
+) -> Result<()> {
+    // Find the class body (block node)
+    for i in 0..class_node.child_count() {
+        if let Some(child) = class_node.child(i) {
+            if child.kind() == "block" {
+                // Search for methods and properties in the block
+                for j in 0..child.child_count() {
+                    if let Some(member) = child.child(j) {
+                        match member.kind() {
+                            "function_definition" => {
+                                if let Ok(method) = parse_method_definition(source_code, &member) {
+                                    methods.push(method);
+                                }
+                            }
+                            "decorated_definition" => {
+                                if let Ok(property) = parse_property_definition(source_code, &member) {
+                                    properties.push(property);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_method_definition(
-    parsed_file: &ParsedFile,
-    method_construct: &CodeConstruct,
+    source_code: &str,
+    method_node: &Node,
 ) -> Result<PythonMethod> {
-    let parameters = extract_parameters(parsed_file, method_construct);
-    let is_async = is_async_function(parsed_file, method_construct);
-    let is_static = is_static_method(parsed_file, method_construct);
-    let decorators = extract_decorators(parsed_file, method_construct);
+    let name = extract_node_name(method_node, source_code)?;
+    let parameters = extract_parameters_from_node(method_node, source_code);
+    let is_async = is_async_function_node(method_node);
+    let is_static = is_static_method_node(method_node);
+    let decorators = extract_decorators_from_node(method_node, source_code);
 
     Ok(PythonMethod {
-        name: method_construct.name.clone().unwrap_or_default(),
-        signature: extract_signature(parsed_file, method_construct),
-        docstring: extract_docstring(parsed_file, method_construct),
+        name,
+        signature: extract_signature_from_node(method_node, source_code),
+        docstring: extract_docstring_from_node(source_code, method_node),
         parameters,
-        returns: extract_return_type(parsed_file, method_construct),
+        returns: extract_return_type_from_node(method_node, source_code),
         is_async,
         is_static,
         decorators,
@@ -582,200 +653,178 @@ fn parse_method_definition(
 }
 
 fn parse_function_definition(
-    parsed_file: &ParsedFile,
-    func_construct: &CodeConstruct,
+    source_code: &str,
+    func_node: &Node,
     file_path: &Path,
 ) -> Result<PythonFunction> {
-    let parameters = extract_parameters(parsed_file, func_construct);
-    let is_async = is_async_function(parsed_file, func_construct);
+    let name = extract_node_name(func_node, source_code)?;
+    let parameters = extract_parameters_from_node(func_node, source_code);
+    let is_async = is_async_function_node(func_node);
 
     Ok(PythonFunction {
-        name: func_construct.name.clone().unwrap_or_default(),
+        name,
         file_path: file_path.to_string_lossy().to_string(),
-        signature: extract_signature(parsed_file, func_construct),
-        docstring: extract_docstring(parsed_file, func_construct),
+        signature: extract_signature_from_node(func_node, source_code),
+        docstring: extract_docstring_from_node(source_code, func_node),
         parameters,
-        returns: extract_return_type(parsed_file, func_construct),
+        returns: extract_return_type_from_node(func_node, source_code),
         is_async,
     })
 }
 
 fn parse_enum_definition(
-    parsed_file: &ParsedFile,
-    enum_construct: &CodeConstruct,
+    source_code: &str,
+    enum_node: &Node,
     file_path: &Path,
 ) -> Result<PythonEnum> {
-    let values = match extract_enum_values(parsed_file, enum_construct) {
-        Ok(values) => values,
-        Err(e) => {
-            debug!("Failed to extract enum values: {}", e);
-            Vec::new()
-        }
-    };
+    let name = extract_node_name(enum_node, source_code)?;
+    let values = extract_enum_values_from_node(enum_node, source_code)?;
 
     Ok(PythonEnum {
-        name: enum_construct.name.clone().unwrap_or_default(),
+        name,
         file_path: file_path.to_string_lossy().to_string(),
-        docstring: extract_docstring(parsed_file, enum_construct),
+        docstring: extract_docstring_from_node(source_code, enum_node),
         values,
     })
 }
 
-fn parse_property_definition(
-    parsed_file: &ParsedFile,
-    property_construct: &CodeConstruct,
-) -> Result<PythonProperty> {
-    Ok(PythonProperty {
-        name: property_construct.name.clone().unwrap_or_default(),
-        type_hint: extract_return_type(parsed_file, property_construct),
-        docstring: extract_docstring(parsed_file, property_construct),
-        is_readonly: !has_setter(parsed_file, property_construct),
-    })
-}
+fn extract_enum_values_from_node(node: &Node, source_code: &str) -> Result<Vec<EnumValue>> {
+    let mut values = Vec::new();
 
-// Helper functions for extraction
-fn extract_docstring(parsed_file: &ParsedFile, construct: &CodeConstruct) -> String {
-    // Look for string literals within the construct
-    let string_literals = search_by_node_type(parsed_file, "string_literal", None);
-
-    for string_literal in string_literals {
-        if is_within_construct(parsed_file, &string_literal, construct) {
-            // Check if this is likely a docstring (first string literal in construct)
-            if !string_literal.source_code.is_empty() {
-                // Check if it's near the beginning of the construct
-                if (string_literal.start_byte - construct.start_byte) < 300 {
-                    // Clean up the string literal (remove quotes)
-                    let mut content = string_literal.source_code.clone();
-                    if content.starts_with('"') && content.ends_with('"') && content.len() > 2 {
-                        content = content[1..content.len() - 1].to_string();
-                    } else if content.starts_with('\'')
-                        && content.ends_with('\'')
-                        && content.len() > 2
-                    {
-                        content = content[1..content.len() - 1].to_string();
-                    } else if content.starts_with("\"\"\"")
-                        && content.ends_with("\"\"\"")
-                        && content.len() > 6
-                    {
-                        content = content[3..content.len() - 3].to_string();
-                    } else if content.starts_with("'''")
-                        && content.ends_with("'''")
-                        && content.len() > 6
-                    {
-                        content = content[3..content.len() - 3].to_string();
-                    }
-
-                    // Only return if it's a reasonable docstring (not empty)
-                    if !content.trim().is_empty() {
-                        return content;
+    // Find the class body (block node)
+    if let Some(body) = find_body_node(node) {
+        // Look for assignment statements in the block
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "assignment" {
+                    // Look for identifier on left side
+                    for j in 0..child.child_count() {
+                        if let Some(left) = child.child(j) {
+                            if left.kind() == "identifier" {
+                                let name = source_code[left.start_byte()..left.end_byte()].to_string();
+                                
+                                // Look for value on right side
+                                let mut value = None;
+                                for k in (j + 1)..child.child_count() {
+                                    if let Some(right) = child.child(k) {
+                                        if right.kind() != "operator" {
+                                            value = Some(source_code[right.start_byte()..right.end_byte()].to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                values.push(EnumValue { name, value });
+                                break;
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    String::new()
+    Ok(values)
 }
 
-fn extract_parameters(_parsed_file: &ParsedFile, construct: &CodeConstruct) -> Vec<Parameter> {
-    // Debug: Log what we're looking for
-    debug!("Extracting parameters for function: {:?}", construct.name);
-    debug!(
-        "Function construct spans bytes {} to {}",
-        construct.start_byte, construct.end_byte
-    );
+fn parse_property_definition(
+    source_code: &str,
+    property_node: &Node,
+) -> Result<PythonProperty> {
+    let name = extract_node_name(property_node, source_code)?;
 
-    // Check if the tree-parser already extracted parameters in the metadata
-    debug!("Metadata parameters: {:?}", construct.metadata.parameters);
+    Ok(PythonProperty {
+        name,
+        type_hint: extract_return_type_from_node(property_node, source_code),
+        docstring: extract_docstring_from_node(source_code, property_node),
+        is_readonly: !has_setter_node(property_node, source_code),
+    })
+}
 
-    if !construct.metadata.parameters.is_empty() {
-        debug!("Using parameters from metadata");
-        // Convert tree-parser Parameter to our Parameter type
-        return construct
-            .metadata
-            .parameters
-            .iter()
-            .map(|p| Parameter {
-                name: p.name.clone(),
-                type_hint: p.param_type.clone().unwrap_or_else(|| "Any".to_string()),
-                default_value: p.default_value.clone(),
-            })
-            .collect();
+// Helper functions for extraction
+fn extract_docstring_from_node(source_code: &str, node: &Node) -> Option<String> {
+    // Look for string literals within the node's body
+    let mut string_literals = Vec::new();
+    
+    // Find the body block of the function/class
+    let body_node = find_body_node(node);
+    
+    if let Some(body) = body_node {
+        // Look for string literals in the body
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "expression_statement" {
+                    for j in 0..child.child_count() {
+                        if let Some(expr) = child.child(j) {
+                            if expr.kind() == "string" {
+                                string_literals.push(expr);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
+    
+    // Take the first string literal (likely the docstring)
+    if let Some(string_node) = string_literals.first() {
+        let string_content = &source_code[string_node.start_byte()..string_node.end_byte()];
+        
+        // Remove quotes and clean up
+        if string_content.starts_with("\"\"\"") && string_content.ends_with("\"\"\"") {
+            let content = &string_content[3..string_content.len() - 3];
+            return Some(content.trim().to_string());
+        } else if string_content.starts_with("'''") && string_content.ends_with("'''") {
+            let content = &string_content[3..string_content.len() - 3];
+            return Some(content.trim().to_string());
+        } else if string_content.starts_with('"') && string_content.ends_with('"') {
+            let content = &string_content[1..string_content.len() - 1];
+            return Some(content.trim().to_string());
+        } else if string_content.starts_with('\'') && string_content.ends_with('\'') {
+            let content = &string_content[1..string_content.len() - 1];
+            return Some(content.trim().to_string());
+        }
+    }
+    
+    None
+}
 
-    // If metadata doesn't have parameters, try a more direct approach
-    // Look for parameters node within the function definition using tree-sitter queries
+fn find_body_node<'a>(node: &'a Node) -> Option<Node<'a>> {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "block" {
+                return Some(child);
+            }
+        }
+    }
+    None
+}
+
+fn extract_parameters_from_node(node: &Node, source_code: &str) -> Vec<Parameter> {
     let mut parameters = Vec::new();
 
-    // Debug: Check children of this function construct
-    debug!(
-        "Function construct has {} children",
-        construct.children.len()
-    );
-    for (i, child) in construct.children.iter().enumerate() {
-        debug!("Child {}: {} ({:?})", i, child.node_type, child.name);
-    }
-
-    // Try to find parameters using a tree-sitter query
-    let _parameters_query = r#"
-    (function_definition
-      parameters: (parameters
-        (identifier) @param_name
-        (type) @param_type?
-      )?
-    )
-    "#;
-
-    // For now, let's try a simpler approach: parse the source code directly
-    // Extract the function signature from the source code
-    let source = &construct.source_code;
-    debug!("Function source code: {}", source);
-
-    // Look for the parameter list between parentheses
-    if let Some(start) = source.find('(') {
-        if let Some(end) = source.find(')') {
-            let param_section = &source[start + 1..end];
-            debug!("Parameter section: {}", param_section);
-
-            // Split by commas and parse each parameter
-            for param_str in param_section.split(',') {
-                let param_str = param_str.trim();
-                if !param_str.is_empty() {
-                    // Skip 'self' and 'cls' parameters
-                    if param_str == "self" || param_str == "cls" {
-                        continue;
-                    }
-
-                    // Split parameter name and type (if present)
-                    let parts: Vec<&str> = param_str.split(':').collect();
-                    let name = parts[0].trim();
-
-                    if !name.is_empty() {
-                        let type_hint = if parts.len() > 1 {
-                            parts[1].trim().to_string()
-                        } else {
-                            "Any".to_string()
-                        };
-
-                        // Check for default values
-                        let default_value = if let Some(eq_pos) = name.find('=') {
-                            Some(name[eq_pos + 1..].trim().to_string())
-                        } else {
-                            None
-                        };
-
-                        let final_name = if let Some(eq_pos) = name.find('=') {
-                            name[..eq_pos].trim()
-                        } else {
-                            name
-                        };
-
-                        if !final_name.is_empty() {
-                            debug!("Adding parameter: {} with type: {}", final_name, type_hint);
+    // Find the parameters node
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "parameters" {
+                // Extract individual parameters
+                for j in 0..child.child_count() {
+                    if let Some(param) = child.child(j) {
+                        if param.kind() == "identifier" {
+                            let param_name = source_code[param.start_byte()..param.end_byte()].to_string();
+                            
+                            // Skip 'self' and 'cls' parameters
+                            if param_name == "self" || param_name == "cls" {
+                                continue;
+                            }
+                            
+                            // Look for type annotation
+                            let type_hint = find_type_annotation(&param, source_code);
+                            
                             parameters.push(Parameter {
-                                name: final_name.to_string(),
+                                name: param_name,
                                 type_hint,
-                                default_value,
+                                default_value: None, // TODO: Extract default values
                             });
                         }
                     }
@@ -784,13 +833,28 @@ fn extract_parameters(_parsed_file: &ParsedFile, construct: &CodeConstruct) -> V
         }
     }
 
-    debug!("Final parameters: {:?}", parameters);
     parameters
 }
 
-fn extract_signature(parsed_file: &ParsedFile, construct: &CodeConstruct) -> String {
-    let name = construct.name.clone().unwrap_or_default();
-    let parameters = extract_parameters(parsed_file, construct);
+fn find_type_annotation(node: &Node, source_code: &str) -> String {
+    // Look for type annotation (usually the next sibling after identifier)
+    let mut parent = node.parent();
+    while let Some(current) = parent {
+        for i in 0..current.child_count() {
+            if let Some(child) = current.child(i) {
+                if child.kind() == "type" {
+                    return source_code[child.start_byte()..child.end_byte()].to_string();
+                }
+            }
+        }
+        parent = current.parent();
+    }
+    "Any".to_string()
+}
+
+fn extract_signature_from_node(node: &Node, source_code: &str) -> String {
+    let name = extract_node_name(node, source_code).unwrap_or_default();
+    let parameters = extract_parameters_from_node(node, source_code);
 
     let param_str = parameters
         .iter()
@@ -809,278 +873,69 @@ fn extract_signature(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Str
     format!("{}({})", name, param_str)
 }
 
-fn extract_return_type(parsed_file: &ParsedFile, construct: &CodeConstruct) -> String {
-    // Look for return type annotation
-    let return_query = format!(
-        "(function_definition
-          return_type: (type) @return_type
-        )"
-    );
-
-    if let Ok(return_constructs) = search_by_query(parsed_file, &return_query) {
-        for return_construct in return_constructs {
-            if is_within_construct(parsed_file, &return_construct, construct) {
-                if !return_construct.source_code.is_empty() {
-                    return return_construct.source_code.clone();
-                }
+fn extract_return_type_from_node(node: &Node, source_code: &str) -> String {
+    // Look for return type annotation (usually after parameters)
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "type" {
+                return source_code[child.start_byte()..child.end_byte()].to_string();
             }
         }
     }
-
     "Any".to_string()
 }
 
-fn is_async_function(parsed_file: &ParsedFile, construct: &CodeConstruct) -> bool {
-    // Look for async keyword nodes within the function definition
-    let async_nodes = search_by_node_type(parsed_file, "async", None);
-
-    for async_node in async_nodes {
-        if is_within_construct(parsed_file, &async_node, construct) {
-            return true;
+fn is_async_function_node(node: &Node) -> bool {
+    // Check if the function has an async modifier
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "async" {
+                return true;
+            }
         }
     }
-
     false
 }
 
-fn is_static_method(parsed_file: &ParsedFile, construct: &CodeConstruct) -> bool {
+fn is_static_method_node(node: &Node) -> bool {
     // Check if the method has @staticmethod decorator
-    let decorators = extract_decorators(parsed_file, construct);
+    let decorators = extract_decorators_from_node(node, "");
     decorators.contains(&"staticmethod".to_string())
 }
 
-fn extract_decorators(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Vec<String> {
+fn extract_decorators_from_node(node: &Node, _source_code: &str) -> Vec<String> {
     let mut decorators = Vec::new();
 
-    // Look for decorator nodes
-    let decorator_nodes = search_by_node_type(parsed_file, "decorator", None);
-
-    for decorator_node in decorator_nodes {
-        if is_within_construct(parsed_file, &decorator_node, construct) {
-            // Look for identifiers within this decorator
-            let decorator_identifiers = search_by_node_type(parsed_file, "identifier", None);
-            for identifier in decorator_identifiers {
-                if is_within_construct(parsed_file, &identifier, &decorator_node) {
-                    if let Some(name) = &identifier.name {
-                        decorators.push(name.clone());
+    // Look for decorator nodes in parent decorated_definition
+    let mut parent = node.parent();
+    while let Some(current) = parent {
+        if current.kind() == "decorated_definition" {
+            for i in 0..current.child_count() {
+                if let Some(child) = current.child(i) {
+                    if child.kind() == "decorator" {
+                        // Extract decorator name
+                        for j in 0..child.child_count() {
+                            if let Some(dec_child) = child.child(j) {
+                                if dec_child.kind() == "identifier" {
+                                    // TODO: Extract actual name from source code
+                                    decorators.push("decorator".to_string());
+                                }
+                            }
+                        }
                     }
                 }
             }
+            break;
         }
+        parent = current.parent();
     }
 
     decorators
 }
 
-fn is_inside_class(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Result<bool> {
-    // Look for parent class_definition
-    let class_query = format!(
-        "(class_definition
-          body: (block
-            (function_definition) @nested_func
-          )
-        )"
-    );
-
-    match search_by_query(parsed_file, &class_query) {
-        Ok(class_constructs) => {
-            for class_construct in class_constructs {
-                if is_within_construct(parsed_file, construct, &class_construct) {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        Err(e) => Err(anyhow!("Failed to search for class definitions: {}", e)),
-    }
-}
-
-fn find_superclasses(
-    parsed_file: &ParsedFile,
-    construct: &CodeConstruct,
-) -> Result<Option<Vec<String>>> {
-    let mut superclasses = Vec::new();
-
-    // Look for argument_list in class definition
-    let superclass_query = format!(
-        "(class_definition
-          superclasses: (argument_list
-            (identifier) @superclass
-          )
-        )"
-    );
-
-    match search_by_query(parsed_file, &superclass_query) {
-        Ok(superclass_constructs) => {
-            for superclass_construct in superclass_constructs {
-                if is_within_construct(parsed_file, &superclass_construct, construct) {
-                    if let Some(name) = &superclass_construct.name {
-                        superclasses.push(name.clone());
-                    }
-                }
-            }
-        }
-        Err(e) => return Err(anyhow!("Failed to search for superclasses: {}", e)),
-    }
-
-    if superclasses.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(superclasses))
-    }
-}
-
-fn inherits_from_enum(parsed_file: &ParsedFile) -> Result<bool> {
-    // Look for import statements that import Enum
-    let import_nodes = search_by_node_type(parsed_file, "import_statement", None);
-
-    for import_node in import_nodes {
-        // Look for identifiers within import statements
-        let import_identifiers = search_by_node_type(parsed_file, "identifier", None);
-
-        for identifier in import_identifiers {
-            if is_within_construct(parsed_file, &identifier, &import_node) {
-                if let Some(name) = &identifier.name {
-                    if name == "Enum" {
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-    }
-
-    // Also check for from imports
-    let import_from_nodes = search_by_node_type(parsed_file, "import_from_statement", None);
-
-    for import_from_node in import_from_nodes {
-        // Look for identifiers within import from statements
-        let import_identifiers = search_by_node_type(parsed_file, "identifier", None);
-
-        for identifier in import_identifiers {
-            if is_within_construct(parsed_file, &identifier, &import_from_node) {
-                if let Some(name) = &identifier.name {
-                    if name == "Enum" {
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(false)
-}
-
-fn is_property_decorator(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Result<bool> {
-    // Look for decorator nodes within the decorated definition
-    let decorator_nodes = search_by_node_type(parsed_file, "decorator", None);
-
-    for decorator_node in decorator_nodes {
-        if is_within_construct(parsed_file, &decorator_node, construct) {
-            // Look for identifiers within this decorator
-            let decorator_identifiers = search_by_node_type(parsed_file, "identifier", None);
-
-            for identifier in decorator_identifiers {
-                if is_within_construct(parsed_file, &identifier, &decorator_node) {
-                    if let Some(name) = &identifier.name {
-                        if name == "property" {
-                            return Ok(true);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(false)
-}
-
-fn has_setter(parsed_file: &ParsedFile, construct: &CodeConstruct) -> bool {
-    // Look for setter method with same name as property
-    if let Some(prop_name) = &construct.name {
-        let setter_query = format!(
-            "(decorated_definition
-              decorator: (decorator
-                (attribute
-                  object: (identifier) @obj_name
-                  attribute: (identifier) @attr_name
-                )
-              )
-              definition: (function_definition
-                name: (identifier) @setter_name
-              )
-            )"
-        );
-
-        if let Ok(setter_constructs) = search_by_query(parsed_file, &setter_query) {
-            for setter_construct in setter_constructs {
-                if let Some(setter_name) = &setter_construct.name {
-                    if setter_name == prop_name {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
+fn has_setter_node(node: &Node, _source_code: &str) -> bool {
+    // TODO: Implement setter detection
     false
-}
-
-fn extract_enum_values(
-    parsed_file: &ParsedFile,
-    construct: &CodeConstruct,
-) -> Result<Vec<EnumValue>> {
-    let mut values = Vec::new();
-
-    // Look for assignment statements within the enum class
-    let enum_value_query = format!(
-        "(class_definition
-          body: (block
-            (assignment
-              left: (identifier) @enum_value_name
-              right: (_) @enum_value
-            )
-          )
-        )"
-    );
-
-    match search_by_query(parsed_file, &enum_value_query) {
-        Ok(enum_value_constructs) => {
-            for enum_value_construct in enum_value_constructs {
-                if is_within_construct(parsed_file, &enum_value_construct, construct) {
-                    if let Some(name) = &enum_value_construct.name {
-                        let value = if enum_value_construct.source_code.is_empty() {
-                            None
-                        } else {
-                            Some(enum_value_construct.source_code.clone())
-                        };
-                        values.push(EnumValue {
-                            name: name.clone(),
-                            value,
-                        });
-                    }
-                }
-            }
-        }
-        Err(e) => return Err(anyhow!("Failed to search for enum values: {}", e)),
-    }
-
-    Ok(values)
-}
-
-fn is_within_construct(
-    _parsed_file: &ParsedFile,
-    inner: &CodeConstruct,
-    outer: &CodeConstruct,
-) -> bool {
-    // Check if inner construct is within outer construct using position information
-    let (inner_start, inner_end, outer_start, outer_end) = (
-        inner.start_byte,
-        inner.end_byte,
-        outer.start_byte,
-        outer.end_byte,
-    );
-
-    inner_start >= outer_start && inner_end <= outer_end
 }
 
 // Command implementations
@@ -1093,8 +948,15 @@ fn execute_list_command(
     let mut filtered_classes = api.classes.clone();
 
     // Apply class filter if provided
+    eprintln!("DEBUG: Found {} classes before filtering", filtered_classes.len());
+    for class in &filtered_classes {
+        eprintln!("DEBUG: Found class: {}", class.name);
+    }
+    
     if let Some(filter) = &class_filter {
+        eprintln!("DEBUG: Applying filter: '{}'", filter);
         filtered_classes.retain(|class| class.name.to_lowercase().contains(&filter.to_lowercase()));
+        eprintln!("DEBUG: Found {} classes after filtering", filtered_classes.len());
     }
 
     // Sort classes by name
@@ -1310,10 +1172,12 @@ fn output_detailed_classes(classes: &[PythonClass], format: OutFormat) -> Result
                     writeln!(md, "### Methods\n")?;
                     for method in &class.methods {
                         writeln!(md, "- `{}`", method.signature)?;
-                        if !method.docstring.is_empty() {
-                            let doc_preview = method.docstring.lines().next().unwrap_or("");
-                            if !doc_preview.is_empty() {
-                                writeln!(md, "  - *{}*", doc_preview)?;
+                        if let Some(docstring) = &method.docstring {
+                            if !docstring.is_empty() {
+                                let doc_preview = docstring.lines().next().unwrap_or("");
+                                if !doc_preview.is_empty() {
+                                    writeln!(md, "  - *{}*", doc_preview)?;
+                                }
                             }
                         }
                     }
@@ -1344,7 +1208,7 @@ fn output_detailed_classes(classes: &[PythonClass], format: OutFormat) -> Result
                         params.join("; "),
                         method.is_async,
                         method.is_static,
-                        method.docstring.replace("\"", "\"\"")
+method.docstring.as_deref().unwrap_or("").replace('"', "\"\"")
                     )?;
                 }
             }
@@ -1379,10 +1243,12 @@ fn output_method_signatures(
             writeln!(md, "# `{}` Method Signatures\n", class_name)?;
             for method in methods {
                 writeln!(md, "```python\n{}\n```", method.signature)?;
-                if !method.docstring.is_empty() {
-                    let doc_preview = method.docstring.lines().next().unwrap_or("");
-                    if !doc_preview.is_empty() {
-                        writeln!(md, "*{}*\n", doc_preview)?;
+                if let Some(docstring) = &method.docstring {
+                    if !docstring.is_empty() {
+                        let doc_preview = docstring.lines().next().unwrap_or("");
+                        if !doc_preview.is_empty() {
+                            writeln!(md, "*{}*\n", doc_preview)?;
+                        }
                     }
                 }
             }
@@ -1420,9 +1286,11 @@ fn output_class_with_docs(
             }
             writeln!(md)?;
 
-            if !class.docstring.is_empty() {
-                writeln!(md, "## Class Documentation\n")?;
-                writeln!(md, "{}\n", class.docstring)?;
+            if let Some(docstring) = &class.docstring {
+                if !docstring.is_empty() {
+                    writeln!(md, "## Class Documentation\n")?;
+                    writeln!(md, "{}\n", docstring)?;
+                }
             }
 
             if !methods.is_empty() {
@@ -1445,9 +1313,11 @@ fn output_class_with_docs(
                     if !method.returns.is_empty() && method.returns != "Any" {
                         writeln!(md, "**Returns**: `{}`\n", method.returns)?;
                     }
-                    if !method.docstring.is_empty() {
-                        writeln!(md, "**Documentation**:\n")?;
-                        writeln!(md, "{}\n", method.docstring)?;
+                    if let Some(docstring) = &method.docstring {
+                        if !docstring.is_empty() {
+                            writeln!(md, "**Documentation**:\n")?;
+                            writeln!(md, "{}\n", docstring)?;
+                        }
                     }
                 }
             }
@@ -1461,7 +1331,7 @@ fn output_class_with_docs(
                 "Class,\"{}\",\"{}\",\"{}\"",
                 class.name,
                 format!("class {}({})", class.name, class.inherits.join(", ")),
-                class.docstring.replace("\"", "\"\"")
+                class.docstring.as_deref().unwrap_or("").replace('"', "\"\"")
             )?;
             for method in methods {
                 writeln!(
@@ -1469,7 +1339,7 @@ fn output_class_with_docs(
                     "Method,\"{}\",\"{}\",\"{}\"",
                     method.name,
                     method.signature,
-                    method.docstring.replace("\"", "\"\"")
+                    method.docstring.as_deref().unwrap_or("").replace('"', "\"\"")
                 )?;
             }
             String::from_utf8_lossy(&csv).to_string()

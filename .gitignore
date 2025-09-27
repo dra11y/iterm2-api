@@ -1,5 +1,6 @@
 .DS_Store
 .cache
+/tree-parser
 /target
 /iTerm2
 api_structure.json
