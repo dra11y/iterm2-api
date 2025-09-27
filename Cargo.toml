@@ -30,7 +30,7 @@ name = "basic_connection"
 path = "examples/basic_connection.rs"
 
 [workspace]
-members = ["download-docs", "python-parser"]
+members = ["download-docs", "api-parser"]
 
 [workspace.metadata.dylint]
 libraries = [{ path = "/Users/tom/apps/toms-lints" }]

@@ -279,17 +279,42 @@ For each feature:
 
 ### Documentation Source Strategy
 
-**RST Files (Source Documentation) - For API Discovery**
-- **Purpose**: Extract complete method inventories and class structures
-- **Method**: Parse `:members:` directives to get all available methods
-- **Files**: `iTerm2/api/library/python/iterm2/docs/*.rst` files (app.rst, session.rst, tab.rst, etc.)
-- **Output**: Complete API coverage matrix
+**Python Source Code Analysis - For API Discovery**
+- **Purpose**: Extract complete method inventories, signatures, and class structures from actual Python source code
+- **Tool**: Use `just api` command (runs `api-parser` tool) to analyze iTerm2 Python API source code
+- **Method**: Direct parsing of Python source files for accurate, up-to-date API information
+- **Files**: `iTerm2/api/library/python/iterm2/iterm2/*.py` files (app.py, session.py, tab.py, window.py, etc.)
+- **Output**: Complete API coverage matrix with method signatures and documentation
 
 **HTML Files (Built Documentation) - For Implementation Details**
 - **Purpose**: Understand method parameters, return values, and usage patterns
 - **Method**: Read detailed descriptions and examples
 - **Files**: `docs/python-api/` directory
 - **Output**: Implementation specifications and best practices
+
+### API Parser Tool Usage
+
+**Available Commands:**
+- `just api` - Show basic API statistics (classes, methods, functions)
+- `just api --detailed` - Show detailed API statistics with parameter analysis and type hints
+- `just api query --class Window` - Query specific class methods and signatures
+- `just api query --class Session --method send_text` - Filter methods by name pattern
+- `just api list --class Window` - List all classes matching pattern
+- `just api functions --name async` - Search for functions by name pattern
+
+**Note:** `just` commands work from any directory in the project - no need to `cd` first.
+
+**Common Usage Patterns:**
+1. **Research a class**: `just api query --class ClassName`
+2. **Find methods with parameters**: `just api query --class ClassName --parameter connection`
+3. **Get method signatures only**: `just api query --class ClassName --signatures`
+4. **See full documentation**: `just api query --class ClassName --docs`
+5. **Analyze API coverage**: `just api --detailed`
+
+**Important Notes:**
+- Tool excludes enum classes from mainmenu.py (menu identifiers, not API classes)
+- All output goes to stdout, never writes to project files
+- Use for API research before implementing Rust equivalents
 
 ### Key Design Principles
 
