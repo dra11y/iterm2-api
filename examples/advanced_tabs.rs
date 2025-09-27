@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a new window first
     println!("Creating new window...");
-    let first_session = connection.create_tab(None, None).await?;
+    let first_session = connection.create_window(None).await?;
     let first_session_id = first_session.unique_identifier().to_string();
 
     // Get the window ID from the window we just created
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Creating tab {}...", i);
 
         // Create a new tab in the same window
-        let session = connection.create_tab(None, Some(&window_id)).await?;
+        let session = connection.create_tab(None, &window_id).await?;
         let session_id = session.unique_identifier().to_string();
 
         println!("Created tab {} with session ID: {}", i, session_id);

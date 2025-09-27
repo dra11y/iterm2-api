@@ -1,6 +1,6 @@
 # Run cargo check
 check:
-    cargo check
+    cargo dylint --all
 
 # Lint and fix with dylint / Tom's custom lints
 fix:

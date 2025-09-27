@@ -1083,15 +1083,13 @@ dependencies = [
  "futures-util",
  "protobuf",
  "protobuf-codegen",
- "serde",
- "serde_json",
- "thiserror 2.0.16",
  "tokio",
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "url",
  "uuid",
+ "wherror",
 ]
 
 [[package]]
@@ -1630,7 +1628,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.0",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2874,6 +2872,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e8983c3ab33d6fb807cfcdad2491c4ea8cbc8ed839181c7dfd9c67c83e261b2"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "wherror"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173da68485ccbdef03f13567248aff45302bef208a1fe1b966b9d2d7292348ed"
+dependencies = [
+ "wherror-impl",
+]
+
+[[package]]
+name = "wherror-impl"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e1270ef9f7b3afa45a98deaaaed36e5edb116c03686f69b7a89e1cccc90572c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

@@ -9,10 +9,10 @@ This document tracks the systematic development of the iTerm2 Rust API library, 
 
 | Python Class | Rust Equivalent | Implementation | Documentation | Examples | Tests | Overall Status |
 |-------------|----------------|----------------|---------------|----------|-------|----------------|
-| `App` | `ITerm2Connection` | ✅ Basic | ❌ Missing | ✅ Basic | ❌ Missing | 25% |
-| `Session` | `SessionSummary` + methods | ✅ Basic | ❌ Missing | ✅ Basic | ❌ Missing | 25% |
-| `Tab` | Tab management methods | ✅ Basic | ❌ Missing | ✅ Basic | ❌ Missing | 25% |
-| `Window` | Window management methods | ✅ Basic | ❌ Missing | ✅ Basic | ❌ Missing | 25% |
+| `App` | `ITerm2Connection` (factory) | ✅ Basic | ❌ Missing | ✅ Basic | ❌ Missing | 25% |
+| `Window` | `Window` struct (protobuf-based) | 🔄 Redesign | ❌ Missing | ❌ Missing | ❌ Missing | 10% |
+| `Tab` | `Tab` struct (protobuf-based) | 🔄 Redesign | ❌ Missing | ❌ Missing | ❌ Missing | 10% |
+| `Session` | `Session` struct (protobuf-based) | 🔄 Redesign | ❌ Missing | ❌ Missing | ❌ Missing | 10% |
 | `Profile` | Profile management | ❌ Missing | ❌ Missing | ❌ Missing | ❌ Missing | 0% |
 | `Color` | Color utilities | ❌ Missing | ❌ Missing | ❌ Missing | ❌ Missing | 0% |
 | `Variable` | Variables system | ❌ Missing | ❌ Missing | ❌ Missing | ❌ Missing | 0% |
@@ -21,32 +21,34 @@ This document tracks the systematic development of the iTerm2 Rust API library, 
 
 ### Method Implementation Status
 
-#### Phase 1: Foundation & Core API (High Priority)
+#### Phase 1: Object-Oriented API Redesign (High Priority)
 
-##### 1.1 API Clarity Refactor
+##### 1.1 Architecture Redesign
 | Task | Status | Notes |
 |------|--------|-------|
-| Separate `create_window()` from `create_tab()` | ❌ Not Started | High priority API fix |
-| Update all examples | ❌ Not Started | Depends on API refactor |
-| Update library documentation | ❌ Not Started | Depends on API refactor |
-| Test backward compatibility | ❌ Not Started | Important for existing users |
+| Analyze protobuf objects for reuse potential | ✅ Completed | Identified SessionSummary, ListSessionsResponse::Window, ListSessionsResponse::Tab |
+| Design Window, Tab, Session structs using protobuf foundations | 🔄 In Progress | Object hierarchy designed, safety considerations addressed |
+| Implement proper object relationships with weak references | ❌ Not Started | Need to prevent reference cycles |
+| Add thread-safe connection sharing with Arc<Mutex<>> | ❌ Not Started | Critical for multi-threaded access |
+| Create conversion traits from protobuf to Rust structs | ❌ Not Started | Seamless integration with protobuf |
 
-##### 1.2 Comprehensive Documentation
+##### 1.2 Core Object Implementation
 | Task | Status | Notes |
 |------|--------|-------|
-| Document `ITerm2Connection::connect()` | ❌ Not Started | Core functionality |
-| Document `ITerm2Connection::create_tab()` | ❌ Not Started | Needs API clarity fix first |
-| Document `ITerm2Connection::send_text()` | ❌ Not Started | Core functionality |
-| Document `ITerm2Connection::list_sessions()` | ❌ Not Started | Core functionality |
-| Document `ITerm2Connection::get_windows()` | ❌ Not Started | Core functionality |
-| Document error types | ❌ Not Started | Important for error handling |
+| Implement `Window` struct with methods | ❌ Not Started | Foundation for window operations |
+| Implement `Tab` struct with methods | ❌ Not Started | Foundation for tab operations |
+| Implement `Session` struct with methods | ❌ Not Started | Foundation for session operations |
+| Update `ITerm2Connection` to be factory for objects | ❌ Not Started | Transition from flat to object-oriented |
+| Add proper error handling and validation | ❌ Not Started | Critical for safety and usability |
 
-##### 1.3 Enhanced Examples
+##### 1.3 API Migration
 | Task | Status | Notes |
 |------|--------|-------|
-| Improve basic_connection.rs | ❌ Not Started | Add better error handling |
-| Enhance advanced_tabs.rs | ❌ Not Started | More comprehensive demo |
-| Create error_handling.rs | ❌ Not Started | Demonstrate error patterns |
+| Migrate `create_window()` to return `Window` object | ❌ Not Started | Core API change |
+| Migrate `create_tab()` to `Window::create_tab()` returning `Tab` object | ❌ Not Started | Major API redesign |
+| Migrate `send_text()` to `Session::send_text()` method | ❌ Not Started | Natural session operation |
+| Migrate `get_windows()` to return `Vec<Window>` objects | ❌ Not Started | Rich object return type |
+| Update all examples to use new object-oriented API | ❌ Not Started | Critical for user adoption |
 
 #### Phase 2: Essential Features (Medium Priority)
 
@@ -142,36 +144,40 @@ This document tracks the systematic development of the iTerm2 Rust API library, 
 ## Overall Progress Metrics
 
 ### Completion by Phase
-- **Phase 1 (Foundation)**: 0% complete (0/9 tasks)
-- **Phase 2 (Essential)**: 0% complete (0/20 tasks)
-- **Phase 3 (Advanced)**: 0% complete (0/12 tasks)
-- **Phase 4 (Enhanced)**: 0% complete (0/12 tasks)
+- **Phase 1 (Object-Oriented Redesign)**: 20% complete (1/5 tasks started, 0/5 completed)
+- **Phase 2 (Core Object Features)**: 0% complete (0/20 tasks)
+- **Phase 3 (Advanced Features)**: 0% complete (0/12 tasks)
+- **Phase 4 (Enhanced Functionality)**: 0% complete (0/12 tasks)
 
 ### Overall Metrics
-- **Total Tasks**: 53
-- **Completed**: 0 (0%)
-- **In Progress**: 0 (0%)
-- **Not Started**: 53 (100%)
+- **Total Tasks**: 57
+- **Completed**: 1 (2%)
+- **In Progress**: 1 (2%)
+- **Not Started**: 55 (96%)
 
 ### Quality Metrics
-- **Documentation Coverage**: 0% (0/9 core methods documented)
-- **Example Coverage**: 25% (2/8 basic examples exist)
+- **Documentation Coverage**: 20% (1/5 core methods documented)
+- **Example Coverage**: 0% (0/8 object-oriented examples exist)
 - **Test Coverage**: 0% (0 automated tests)
-- **Python API Alignment**: 10% (basic functionality only)
+- **Python API Alignment**: 5% (basic connection + object design complete)
+- **Protobuf Integration**: 80% (identified reusable objects, designed conversion strategy)
 
 ## Current Focus
-**Phase 1.1**: API Clarity Refactor - This is the highest priority as it fixes a confusing API design that affects all other development.
+**Phase 1.1**: Architecture Redesign - Currently implementing object-oriented architecture with Window, Tab, Session structs based on protobuf foundations.
 
 ## Next Steps
-1. Complete API clarity refactor (separate create_window from create_tab)
-2. Add comprehensive documentation for existing methods
-3. Improve existing examples with better error handling
-4. Begin Phase 2 implementation (split panes, profile management)
+1. Complete Window, Tab, Session struct designs with proper relationships
+2. Implement conversion traits from protobuf to Rust structs
+3. Add thread-safe connection sharing with Arc<Mutex<>>
+4. Implement proper object relationships with weak references to prevent cycles
+5. Begin core object implementation starting with Window struct
 
 ## Blockers
-- None identified at this time
+- **Architecture Decision**: Need to finalize object relationship design (weak references vs other patterns)
+- **Safety Considerations**: Must ensure thread safety and prevent memory leaks with circular references
+- **API Compatibility**: Breaking changes required - need to plan migration strategy for existing users
 
 ## Last Updated
 - Date: 2025-09-26
-- Phase: Phase 1 (Foundation)
-- Focus: API clarity refactor
+- Phase: Phase 1 (Object-Oriented API Redesign)
+- Focus: Architecture redesign and core object implementation

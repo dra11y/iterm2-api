@@ -11,6 +11,31 @@ pub struct ITerm2Connection {
 }
 
 impl ITerm2Connection {
+    /// Connect to iTerm2 via Unix domain socket.
+    /// 
+    /// This establishes a WebSocket connection to iTerm2's API server. iTerm2 must be
+    /// running with the API server enabled in Settings > General > Magic.
+    /// 
+    /// # Returns
+    /// A connected `ITerm2Connection` instance
+    /// 
+    /// # Errors
+    /// Returns `Error::Connection` if:
+    /// - iTerm2 is not running
+    /// - The API server is not enabled
+    /// - The Unix domain socket cannot be found or accessed
+    /// - The WebSocket handshake fails
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use iterm2_api::ITerm2Connection;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut connection = ITerm2Connection::connect().await?;
+    /// println!("Connected to iTerm2 successfully!");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn connect() -> Result<Self> {
         // Unix domain socket is the ONLY way to connect to iTerm2
         let socket_path = dirs::home_dir()
@@ -85,18 +110,99 @@ impl ITerm2Connection {
         }
     }
 
+    /// Create a new window with a single tab.
+    /// 
+    /// This is equivalent to creating a new iTerm2 window. If you want to create
+    /// a tab within an existing window, use `create_tab()` instead.
+    /// 
+    /// # Arguments
+    /// * `profile_name` - Optional profile name to use for the new tab
+    /// 
+    /// # Returns
+    /// A `SessionSummary` for the newly created session in the new window
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use iterm2_api::ITerm2Connection;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut connection = ITerm2Connection::connect().await?;
+    /// let session = connection.create_window(None).await?;
+    /// println!("Created new window with session: {}", session.unique_identifier());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn create_window(&mut self, profile_name: Option<&str>) -> Result<SessionSummary> {
+        let mut request = CreateTabRequest::new();
+        if let Some(profile) = profile_name {
+            request.set_profile_name(profile.to_string());
+        }
+        // No window_id means create a new window
+
+        let mut message = ClientOriginatedMessage::new();
+        message.set_create_tab_request(request);
+
+        self.send_message(message).await?;
+
+        let response = self.receive_message().await?;
+
+        if response.has_create_tab_response() {
+            let create_response = response.create_tab_response();
+            if create_response.status() == create_tab_response::Status::OK {
+                let mut session = SessionSummary::new();
+                session.set_unique_identifier(create_response.session_id().to_string());
+                Ok(session)
+            } else {
+                Err(Error::Api(format!(
+                    "Create window failed: {:?}",
+                    create_response.status()
+                )))
+            }
+        } else {
+            Err(Error::Api("Expected create tab response".to_string()))
+        }
+    }
+
+    /// Create a new tab in an existing window.
+    /// 
+    /// This creates a new tab within the specified window. If you want to create
+    /// a new window, use `create_window()` instead.
+    /// 
+    /// # Arguments
+    /// * `profile_name` - Optional profile name to use for the new tab
+    /// * `window_id` - The ID of the window to create the tab in
+    /// 
+    /// # Returns
+    /// A `SessionSummary` for the newly created session
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use iterm2_api::ITerm2Connection;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut connection = ITerm2Connection::connect().await?;
+    /// 
+    /// // First create a window to get a window_id
+    /// let first_session = connection.create_window(None).await?;
+    /// let windows = connection.get_windows().await?;
+    /// let window_id = windows.first().unwrap().window_id().to_string();
+    /// 
+    /// // Now create a tab in that window
+    /// let session = connection.create_tab(None, &window_id).await?;
+    /// println!("Created new tab with session: {}", session.unique_identifier());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_tab(
         &mut self,
         profile_name: Option<&str>,
-        window_id: Option<&str>,
+        window_id: &str,
     ) -> Result<SessionSummary> {
         let mut request = CreateTabRequest::new();
         if let Some(profile) = profile_name {
             request.set_profile_name(profile.to_string());
         }
-        if let Some(window) = window_id {
-            request.set_window_id(window.to_string());
-        }
+        request.set_window_id(window_id.to_string());
 
         let mut message = ClientOriginatedMessage::new();
         message.set_create_tab_request(request);
@@ -122,6 +228,36 @@ impl ITerm2Connection {
         }
     }
 
+    
+
+    /// Send text to a specific session.
+    /// 
+    /// This sends the specified text to the terminal session identified by `session_id`.
+    /// The text is sent as if typed by the user. Include carriage returns (`\r`) to execute commands.
+    /// 
+    /// # Arguments
+    /// * `session_id` - The unique identifier of the session to send text to
+    /// * `text` - The text to send to the session
+    /// 
+    /// # Returns
+    /// `Ok(())` if the text was sent successfully
+    /// 
+    /// # Errors
+    /// Returns `Error::Api` if the session doesn't exist or the send operation fails
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use iterm2_api::ITerm2Connection;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut connection = ITerm2Connection::connect().await?;
+    /// let session = connection.create_window(None).await?;
+    /// 
+    /// // Send a command (note the \r to execute)
+    /// connection.send_text(session.unique_identifier(), "echo Hello World\r").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send_text(&mut self, session_id: &str, text: &str) -> Result<()> {
         let mut request = SendTextRequest::new();
         request.set_session(session_id.to_string());
@@ -149,6 +285,33 @@ impl ITerm2Connection {
         }
     }
 
+    /// List all available sessions.
+    /// 
+    /// This returns a list of all sessions that are currently available. Note that
+    /// this primarily returns buried sessions (sessions that are not in any window).
+    /// For sessions in windows, use `get_windows()` and examine the window structure.
+    /// 
+    /// # Returns
+    /// A vector of `SessionSummary` objects representing available sessions
+    /// 
+    /// # Errors
+    /// Returns `Error::Api` if the list operation fails
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use iterm2_api::ITerm2Connection;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut connection = ITerm2Connection::connect().await?;
+    /// let sessions = connection.list_sessions().await?;
+    /// 
+    /// println!("Found {} sessions:", sessions.len());
+    /// for session in sessions {
+    ///     println!("  Session: {}", session.unique_identifier());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn list_sessions(&mut self) -> Result<Vec<SessionSummary>> {
         let request = ListSessionsRequest::new();
 
@@ -175,6 +338,33 @@ impl ITerm2Connection {
         }
     }
 
+    /// Get all iTerm2 windows.
+    /// 
+    /// This returns a list of all currently open iTerm2 windows, including their
+    /// tabs and sessions. Each window contains information about its tabs and sessions.
+    /// 
+    /// # Returns
+    /// A vector of `Window` objects representing all open iTerm2 windows
+    /// 
+    /// # Errors
+    /// Returns `Error::Api` if the get windows operation fails
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use iterm2_api::ITerm2Connection;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut connection = ITerm2Connection::connect().await?;
+    /// let windows = connection.get_windows().await?;
+    /// 
+    /// println!("Found {} windows:", windows.len());
+    /// for window in &windows {
+    ///     println!("  Window ID: {}", window.window_id());
+    ///     println!("  Number of tabs: {}", window.tabs.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_windows(&mut self) -> Result<Vec<list_sessions_response::Window>> {
         let request = ListSessionsRequest::new();
 

@@ -1,4 +1,4 @@
-use thiserror::Error;
+use wherror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

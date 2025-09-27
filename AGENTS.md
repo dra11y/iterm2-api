@@ -1,5 +1,8 @@
 # AGENTS.md - Technical Summary for AI
 
+## **CRITICAL**
+Use `just check` and other recipes instead of `cargo check`, etc. to enforce our linting rules.
+
 ## Project Overview
 Rust library for programmatically controlling iTerm2 via its official WebSocket API over Unix domain socket. Alternative to Python API.
 
@@ -13,7 +16,10 @@ Rust library for programmatically controlling iTerm2 via its official WebSocket 
 - **Security**: iTerm2 handles authentication via user prompts or "Allow all apps to connect" mode
 
 ## Key Components
-- `ITerm2Connection`: Main connection struct handling WebSocket communication
+- `ITerm2Connection`: Main connection factory and WebSocket communication handler
+- `Window`: Object-oriented window management with tabs and sessions
+- `Tab`: Object-oriented tab management with sessions and pane layout
+- `Session`: Object-oriented session management with terminal operations
 - `Error`: Custom error types for WebSocket, IO, Protobuf, Authentication, Connection, API
 - `generated/`: Rust code generated from protobuf definitions
 
@@ -31,25 +37,24 @@ This library uses iTerm2's "Python API" server setting, but this is misleading n
 - **NEVER** use ITERM2_COOKIE environment variable - this only works for Python scripts launched from iTerm2's Scripts menu (Rust apps CANNOT be added to this menu)
 - **NEVER** reference AppleScript - this is a pure Rust project with no AppleScript integration
 - **NEVER** attempt cookie-based authentication - iTerm2 handles authentication automatically via its security model
+- **NEVER** add deprecation warnings or legacy methods - this is in development, APIs should be clean and intuitive from the start without backward compatibility concerns
 
 ## API Operations
-- `create_tab()`: Create new tab (optionally in specific window)
-- `send_text()`: Send text to specific session
-- `list_sessions()`: List all sessions
-- `get_windows()`: Get window information
+- `ITerm2Connection::connect()`: Establish connection to iTerm2
+- `ITerm2Connection::create_window()`: Create new window with initial tab
+- `Window::create_tab()`: Create new tab in existing window
+- `Tab::split_pane()`: Split tab into multiple panes
+- `Session::send_text()`: Send text to specific session
+- `Session::get_buffer()`: Read terminal buffer content
+- `Window::activate()`: Focus specific window
+- `Tab::activate()`: Focus specific tab
+- `Session::activate()`: Focus specific session
 
 ## Development Workflow
-- **Build**: `cargo build` (generates protobuf code via build.rs)
+- **Build**: `just generate-proto` (generates protobuf code via build.rs)
 - **Proto Download**: `just download-proto` (fetches latest from iTerm2 repo)
-- **Proto Generation**: `just generate-proto` (runs cargo build --build-only)
-- **Linting**: `just fix` (uses custom dylint rules + cargo fmt)
+- **Linting**: `just check` / `just fix` (uses custom dylint rules + cargo fmt)
 - **README**: `just readme` (generates README.md from crate docs)
-
-## Dependencies
-- **Core**: tokio, tokio-tungstenite, futures-util, protobuf
-- **Serialization**: serde, serde_json, base64, uuid
-- **Error Handling**: thiserror
-- **Utilities**: dirs, url, tracing
 
 ## Examples
 - `basic_connection.rs`: Simple connection and tab creation
@@ -62,40 +67,42 @@ This library uses iTerm2's "Python API" server setting, but this is misleading n
 
 ## TODO List
 
-### High Priority (API Foundation)
-- **Fix API clarity**: `create_tab()` method is confusing - `create_tab(None, None)` creates a new window, not a tab. Consider making window_id required or renaming method to be clearer about window vs tab creation
-- **DOCUMENT ALL** public methods, functions, structs, and enums+variants with comprehensive Rustdoc comments
-- **IMPROVE example docs**: Add more comprehensive examples with better documentation
+### High Priority (Object-Oriented API Redesign) - IN PROGRESS
+- **ARCHITECTURE REDESIGN**: Replace flat `ITerm2Connection` methods with proper `Window`, `Tab`, `Session` structs that mirror Python API object hierarchy
+- **Reuse protobuf objects**: Leverage existing `ListSessionsResponse::Window`, `ListSessionsResponse::Tab`, and `SessionSummary` protobuf messages as foundation for Rust structs
+- **Implement object relationships**: Window contains Tabs, Tab contains Sessions, with proper weak references to prevent cycles
+- **Method migration**: Move functionality from `ITerm2Connection` methods to object methods (e.g., `connection.create_tab()` → `window.create_tab()`)
+- **Safety guarantees**: Implement proper validation, error handling, and thread safety with Arc<Mutex<Connection>> references
 
-### Medium Priority (Core API Features)
+### Medium Priority (Core Object-Oriented Features)
 Based on iTerm2 Python API documentation analysis, implement these key features:
 
-#### Window and Tab Management
-- **Split pane functionality**: Implement `split_pane` methods for horizontal/vertical splits
-- **Session activation**: Add methods to focus/activate specific sessions and tabs
-- **Window arrangement**: Implement saved arrangements and window positioning
+#### Window Management
+- **Window operations**: `activate()`, `close()`, `set_title()`, `get_frame()`, `set_frame()`
+- **Window properties**: Access window number, frame, tab list
+- **Window relationships**: Parent-child relationships with tabs
+
+#### Tab Management
+- **Tab operations**: `activate()`, `close()`, `set_title()`, `split_pane()`, `select_pane_in_direction()`
+- **Tab properties**: Access tab ID, layout structure, session list
+- **Tab relationships**: Parent-child with window and sessions
+
+#### Session Management
+- **Session operations**: `send_text()`, `activate()`, `split_pane()`, `get_buffer()`, `get_prompt()`, `run_coprocess()`, `stop_coprocess()`
+- **Session properties**: Access session ID, title, frame, grid size, profile
+- **Session relationships**: Parent-child with tab
 
 #### Profile Management
-- **Get profile properties**: Add methods to retrieve profile settings (colors, fonts, etc.)
-- **Set profile properties**: Add methods to modify profile settings dynamically
-- **Profile switching**: Implement methods to change session profiles
+- **Profile operations**: `get_property()`, `set_property()`, `list_profiles()`, `switch_profile()`
+- **Profile properties**: Colors, fonts, cursor, text rendering, background
 
-#### Variables System
-- **Variable monitoring**: Implement the variables system for monitoring iTerm2 state changes
-- **Variable setting**: Add methods to set custom variables
-- **Event subscriptions**: Add support for subscribing to variable change events
-
-#### Advanced Features
-- **Buffer access**: Implement `get_buffer` methods for reading terminal content
-- **Prompt detection**: Add `get_prompt` functionality for detecting shell prompts
-- **Notification system**: Implement iTerm2 notification capabilities
-- **Tool registration**: Add support for registering custom tools
-
-### Low Priority (Enhanced Functionality)
-- **Transaction support**: Implement transaction-based operations for atomic changes
-- **Property system**: Add generic get/set property methods
-- **Injection system**: Implement custom escape sequence injection
-- **Saved arrangements**: Add methods for saving and restoring window arrangements
+### Low Priority (Advanced Object-Oriented Features)
+- **Variables system**: `get_variable()`, `set_variable()`, `monitor_variables()`, event subscriptions
+- **Notification system**: `show_notification()`, custom notifications, notification handlers
+- **Event subscriptions**: Session lifecycle, tab lifecycle, window lifecycle events
+- **Transaction support**: Atomic operations across multiple objects
+- **Saved arrangements**: Save/restore window arrangements, workspace management
+- **Tool registration**: Register custom tools, tool integration
 
 ## Systematic Development Approach
 
@@ -104,15 +111,15 @@ Based on iTerm2 Python API documentation analysis, implement these key features:
 To guarantee comprehensive coverage, we'll create a systematic mapping of Python API features to Rust implementation:
 
 #### Core Classes Inventory
-Based on Python API documentation, we need to implement these main classes:
+Based on Python API documentation and protobuf analysis, we need to implement these main classes:
 
 | Python Class | Rust Equivalent | Status | Priority |
 |-------------|----------------|--------|----------|
-| `App` | `ITerm2Connection` methods | ✅ Basic | High |
-| `Session` | `SessionSummary` + methods | ✅ Basic | High |
-| `Tab` | Tab management methods | ✅ Basic | High |
-| `Window` | Window management methods | ✅ Basic | High |
-| `Profile` | Profile management | ❌ Missing | Medium |
+| `App` | `ITerm2Connection` (factory) | ✅ Basic | High |
+| `Window` | `Window` struct (reuses protobuf) | 🔄 Redesign | High |
+| `Tab` | `Tab` struct (reuses protobuf) | 🔄 Redesign | High |
+| `Session` | `Session` struct (reuses protobuf) | 🔄 Redesign | High |
+| `Profile` | `Profile` management | ❌ Missing | Medium |
 | `Color` | Color utilities | ❌ Missing | Medium |
 | `Variable` | Variables system | ❌ Missing | Medium |
 | `Screen` | Buffer access | ❌ Missing | Medium |
@@ -129,56 +136,61 @@ For each Python API method, we'll track:
 
 ### Implementation Phases with Dependencies
 
-#### Phase 1: Foundation & Core API (High Priority)
+#### Phase 1: Object-Oriented API Redesign (High Priority) - IN PROGRESS
 **Prerequisites**: None
-**Goal**: Basic functionality working with clear API
+**Goal**: Replace flat API with proper object hierarchy matching Python API
 
-1.1. **API Clarity Refactor**
-- [ ] Separate `create_window()` from `create_tab()`
-- [ ] Update all examples and documentation
-- [ ] Test backward compatibility
+1.1. **Architecture Redesign** - 🔄 IN PROGRESS
+- [x] Analyze protobuf objects for reuse potential
+- [ ] Design Window, Tab, Session structs using protobuf foundations
+- [ ] Implement proper object relationships with weak references
+- [ ] Add thread-safe connection sharing with Arc<Mutex<>>
+- [ ] Create conversion traits from protobuf to Rust structs
 
-1.2. **Comprehensive Documentation**
-- [ ] Document all existing public methods
-- [ ] Add Rustdoc examples for each method
-- [ ] Document error types and handling
+1.2. **Core Object Implementation** - 🔄 IN PROGRESS
+- [ ] Implement `Window` struct with methods (create_tab, activate, close, etc.)
+- [ ] Implement `Tab` struct with methods (split_pane, activate, select_pane, etc.)
+- [ ] Implement `Session` struct with methods (send_text, get_buffer, split_pane, etc.)
+- [ ] Update `ITerm2Connection` to be factory for objects
+- [ ] Add proper error handling and validation
 
-1.3. **Enhanced Examples**
-- [ ] Improve basic_connection.rs with error handling
-- [ ] Add comprehensive advanced_tabs.rs
-- [ ] Create error_handling.rs example
+1.3. **API Migration** - 🔄 IN PROGRESS
+- [ ] Migrate `create_window()` to return `Window` object
+- [ ] Migrate `create_tab()` to `Window::create_tab()` returning `Tab` object
+- [ ] Migrate `send_text()` to `Session::send_text()` method
+- [ ] Migrate `get_windows()` to return `Vec<Window>` objects
+- [ ] Update all examples to use new object-oriented API
 
-#### Phase 2: Essential Features (Medium Priority)
+#### Phase 2: Core Object Features (Medium Priority)
 **Prerequisites**: Phase 1 complete
-**Goal**: Core iTerm2 functionality for terminal automation
+**Goal**: Implement essential iTerm2 functionality on new object architecture
 
 2.1. **Split Pane System**
-- [ ] Research Python `split_pane` methods
-- [ ] Implement `split_pane_horizontal()`
-- [ ] Implement `split_pane_vertical()`
-- [ ] Add pane management methods
-- [ ] Create split_pane.rs example
+- [ ] Implement `Tab::split_pane_horizontal()` and `Tab::split_pane_vertical()`
+- [ ] Implement `Session::split_pane()` for session-based splitting
+- [ ] Add pane management methods (focus, resize, close)
+- [ ] Implement `Tab::select_pane_in_direction()` method
+- [ ] Create split_pane.rs example demonstrating object-oriented usage
 
-2.2. **Profile Management**
-- [ ] Research Python profile API
-- [ ] Implement `get_profile_property()`
-- [ ] Implement `set_profile_property()`
-- [ ] Add profile listing methods
+2.2. **Session Operations**
+- [ ] Implement `Session::get_buffer()` for terminal content access
+- [ ] Implement `Session::get_prompt()` for shell prompt detection
+- [ ] Implement `Session::run_coprocess()` and `Session::stop_coprocess()`
+- [ ] Add session property accessors (title, frame, grid_size)
+- [ ] Create session_operations.rs example
+
+2.3. **Activation & Focus**
+- [ ] Implement `Window::activate()` for window focus
+- [ ] Implement `Tab::activate()` for tab focus
+- [ ] Implement `Session::activate()` for session focus
+- [ ] Add focus validation and error handling
+- [ ] Create activation.rs example
+
+2.4. **Profile Management**
+- [ ] Implement `Session::get_profile_property()` and `Session::set_profile_property()`
+- [ ] Add profile listing and switching capabilities
+- [ ] Implement profile property validation
 - [ ] Create profile_management.rs example
-
-2.3. **Session Activation & Focus**
-- [ ] Research Python activation methods
-- [ ] Implement `activate_session()`
-- [ ] Implement `activate_tab()`
-- [ ] Implement `activate_window()`
-- [ ] Create session_activation.rs example
-
-2.4. **Variables System**
-- [ ] Research Python variables API
-- [ ] Implement `get_variable()`
-- [ ] Implement `set_variable()`
-- [ ] Implement variable monitoring
-- [ ] Create variables.rs example
 
 #### Phase 3: Advanced Features (Medium Priority)
 **Prerequisites**: Phase 2 complete
@@ -256,12 +268,14 @@ Create a `PROGRESS.md` file with:
 For each feature:
 1. **Research (RST Files)**: Extract complete method signatures and API surface from source RST files
 2. **Research (HTML Files)**: Understand detailed implementation requirements and usage patterns from HTML docs
-3. **Design**: Create Rust API that's idiomatic, safe, and aligns with Python behavior
-4. **Document**: Write comprehensive Rustdoc with examples before coding
-5. **Implement**: Add methods to `ITerm2Connection` struct with proper error handling
-6. **Example**: Create working example demonstrating real-world usage
-7. **Test**: Write unit and integration tests ensuring correctness
-8. **Review**: Verify alignment with Python API and update progress matrix
+3. **Protobuf Analysis**: Examine protobuf definitions to understand available data structures and relationships
+4. **Design**: Create Rust API that's idiomatic, safe, and aligns with Python behavior using object-oriented patterns
+5. **Document**: Write comprehensive Rustdoc with examples before coding
+6. **Implement**: Create proper Rust structs with methods, leveraging protobuf foundations
+7. **Safety**: Implement proper error handling, validation, and thread safety
+8. **Example**: Create working example demonstrating real-world object-oriented usage
+9. **Test**: Write unit and integration tests ensuring correctness
+10. **Review**: Verify alignment with Python API and update progress matrix
 
 ### Documentation Source Strategy
 
@@ -279,10 +293,13 @@ For each feature:
 
 ### Key Design Principles
 
-- **Python API Alignment**: Rust API should mirror Python capabilities where idiomatic
-- **Idiomatic Rust**: Use Result types, proper error handling, and Rust conventions
-- **Safety**: Ensure all operations are safe and handle edge cases gracefully
-- **Clarity**: Method names should clearly indicate what they do
+- **Python API Alignment**: Rust API should mirror Python capabilities where idiomatic, using object-oriented patterns
+- **Idiomatic Rust**: Use Result types, proper error handling, Rust conventions, and smart pointers (Arc, Weak, Rc)
+- **Object-Oriented Architecture**: Use structs with methods to represent iTerm2 objects (Window, Tab, Session) with proper relationships
+- **Protobuf Reuse**: Leverage existing protobuf definitions (SessionSummary, ListSessionsResponse::Window, ListSessionsResponse::Tab) as foundation
+- **Safety**: Ensure all operations are safe with proper validation, weak references to prevent cycles, and thread-safe connection sharing
+- **Clarity**: Method names should clearly indicate what they do (no confusing APIs), and object hierarchy should be intuitive
 - **Documentation**: Every public API must have comprehensive documentation with examples
-- **Testing**: Every feature must have comprehensive test coverage
-- **Examples**: Every major feature should have a working, documented example
+- **Testing**: Every feature must have comprehensive test coverage including unit tests, integration tests, and example validation
+- **Examples**: Every major feature should have a working, documented example demonstrating object-oriented usage
+- **No Legacy Code**: Since this is in development, there is no backward compatibility, deprecation, or legacy methods - APIs are clean and intuitive from the start

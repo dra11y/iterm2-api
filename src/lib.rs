@@ -19,8 +19,8 @@
 //!     // Connect to iTerm2
 //!     let mut connection = ITerm2Connection::connect().await?;
 //!
-//!     // Create a new tab (creates a new window)
-//!     let session = connection.create_tab(None, None).await?;
+//!     // Create a new window with a single tab
+//!     let session = connection.create_window(None).await?;
 //!
 //!     // Send a command to the new session
 //!     connection.send_text(session.unique_identifier(), "echo Hello World\r").await?;
@@ -40,8 +40,8 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let mut connection = ITerm2Connection::connect().await?;
 //!
-//!     // Create first tab to establish a window
-//!     let first_session = connection.create_tab(None, None).await?;
+//!     // Create first window to establish a window_id
+//!     let first_session = connection.create_window(None).await?;
 //!     let windows = connection.get_windows().await?;
 //!     let window_id = windows.first().unwrap().window_id().to_string();
 //!
@@ -50,7 +50,7 @@
 //!     let mut sessions = vec![first_session.unique_identifier().to_string()];
 //!
 //!     for i in 2..=4 {
-//!         let session = connection.create_tab(None, Some(&window_id)).await?;
+//!         let session = connection.create_tab(None, &window_id).await?;
 //!         let session_id = session.unique_identifier().to_string();
 //!
 //!         // Change to working directory

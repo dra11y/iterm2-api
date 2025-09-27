@@ -23,12 +23,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Try to create a new tab
-    println!("Creating new tab...");
-    match connection.create_tab(None, None).await {
+    // Try to create a new window
+    println!("Creating new window...");
+    match connection.create_window(None).await {
         Ok(session) => {
             println!(
-                "Created tab with session ID: {}",
+                "Created window with session ID: {}",
                 session.unique_identifier()
             );
 
