@@ -1,10 +1,13 @@
-use anyhow::Result;
-use chrono;
+use anyhow::{Result, anyhow};
+use chrono::{self, Utc};
 use clap::{Parser, ValueEnum};
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use std::{fs::read_dir, io::Write, path::Path};
+use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 use tracing_subscriber::fmt;
+use tree_parser::{CodeConstruct, ParsedFile};
 
 #[derive(Debug, Default, ValueEnum, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[clap(rename_all = "lower")]
@@ -157,10 +160,7 @@ async fn main() -> Result<()> {
 async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
     let source_dir = Path::new(source_path);
     if !source_dir.exists() {
-        return Err(anyhow::anyhow!(
-            "Source directory does not exist: {}",
-            source_path
-        ));
+        return Err(anyhow!("Source directory does not exist: {}", source_path));
     }
 
     let mut classes = Vec::new();
@@ -173,7 +173,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
 
     fn collect_python_files(
         dir: &Path,
-        parse_futures: &mut Vec<tokio::task::JoinHandle<Option<FileApi>>>,
+        parse_futures: &mut Vec<JoinHandle<Option<FileApi>>>,
         total_files: &mut usize,
     ) -> Result<()> {
         for entry in read_dir(dir)? {
@@ -210,7 +210,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
 
     // Wait for all parsing to complete
     warn!("Waiting for parsing...");
-    let results = futures::future::join_all(parse_futures).await;
+    let results = join_all(parse_futures).await;
     warn!("Parsing complete!");
 
     for result in results {
@@ -221,6 +221,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
                 functions.extend(file_api.functions);
             }
             Ok(None) => {
+                warn!("File parsing failed");
                 // File parsing failed, already logged in the task
             }
             Err(join_error) => {
@@ -247,7 +248,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
             total_functions,
             total_enums,
             source_directory: source_path.to_string(),
-            extraction_timestamp: chrono::Utc::now().to_rfc3339(),
+            extraction_timestamp: Utc::now().to_rfc3339(),
         },
     })
 }
@@ -378,8 +379,8 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
 }
 
 fn parse_class_definition(
-    parsed_file: &tree_parser::ParsedFile,
-    class_construct: &tree_parser::CodeConstruct,
+    parsed_file: &ParsedFile,
+    class_construct: &CodeConstruct,
     file_path: &Path,
 ) -> Result<PythonClass> {
     let mut methods = Vec::new();
@@ -445,8 +446,8 @@ fn parse_class_definition(
 }
 
 fn parse_method_definition(
-    parsed_file: &tree_parser::ParsedFile,
-    method_construct: &tree_parser::CodeConstruct,
+    parsed_file: &ParsedFile,
+    method_construct: &CodeConstruct,
 ) -> Result<PythonMethod> {
     let parameters = extract_parameters(parsed_file, method_construct);
     let is_async = is_async_function(parsed_file, method_construct);
@@ -466,8 +467,8 @@ fn parse_method_definition(
 }
 
 fn parse_function_definition(
-    parsed_file: &tree_parser::ParsedFile,
-    func_construct: &tree_parser::CodeConstruct,
+    parsed_file: &ParsedFile,
+    func_construct: &CodeConstruct,
     file_path: &Path,
 ) -> Result<PythonFunction> {
     let parameters = extract_parameters(parsed_file, func_construct);
@@ -485,8 +486,8 @@ fn parse_function_definition(
 }
 
 fn parse_enum_definition(
-    parsed_file: &tree_parser::ParsedFile,
-    enum_construct: &tree_parser::CodeConstruct,
+    parsed_file: &ParsedFile,
+    enum_construct: &CodeConstruct,
     file_path: &Path,
 ) -> Result<PythonEnum> {
     let values = match extract_enum_values(parsed_file, enum_construct) {
@@ -506,8 +507,8 @@ fn parse_enum_definition(
 }
 
 fn parse_property_definition(
-    parsed_file: &tree_parser::ParsedFile,
-    property_construct: &tree_parser::CodeConstruct,
+    parsed_file: &ParsedFile,
+    property_construct: &CodeConstruct,
 ) -> Result<PythonProperty> {
     Ok(PythonProperty {
         name: property_construct.name.clone().unwrap_or_default(),
@@ -517,15 +518,8 @@ fn parse_property_definition(
     })
 }
 
-// let json = serde_json::to_string_pretty(&api)?;
-// export_to_csv(&api, output_path)?;
-// export_to_markdown(&api, output_path)?;
-
 // Helper functions for extraction
-fn extract_docstring(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> String {
+fn extract_docstring(parsed_file: &ParsedFile, construct: &CodeConstruct) -> String {
     // Look for string literals within the construct
     let string_literals = tree_parser::search_by_node_type(parsed_file, "string_literal", None);
 
@@ -568,10 +562,7 @@ fn extract_docstring(
     String::new()
 }
 
-fn extract_parameters(
-    _parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> Vec<Parameter> {
+fn extract_parameters(_parsed_file: &ParsedFile, construct: &CodeConstruct) -> Vec<Parameter> {
     // Debug: Log what we're looking for
     debug!("Extracting parameters for function: {:?}", construct.name);
     debug!(
@@ -682,10 +673,7 @@ fn extract_parameters(
     parameters
 }
 
-fn extract_signature(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> String {
+fn extract_signature(parsed_file: &ParsedFile, construct: &CodeConstruct) -> String {
     let name = construct.name.clone().unwrap_or_default();
     let parameters = extract_parameters(parsed_file, construct);
 
@@ -706,10 +694,7 @@ fn extract_signature(
     format!("{}({})", name, param_str)
 }
 
-fn extract_return_type(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> String {
+fn extract_return_type(parsed_file: &ParsedFile, construct: &CodeConstruct) -> String {
     // Look for return type annotation
     let return_query = format!(
         "(function_definition
@@ -730,10 +715,7 @@ fn extract_return_type(
     "Any".to_string()
 }
 
-fn is_async_function(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> bool {
+fn is_async_function(parsed_file: &ParsedFile, construct: &CodeConstruct) -> bool {
     // Look for async keyword nodes within the function definition
     let async_nodes = tree_parser::search_by_node_type(parsed_file, "async", None);
 
@@ -746,19 +728,13 @@ fn is_async_function(
     false
 }
 
-fn is_static_method(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> bool {
+fn is_static_method(parsed_file: &ParsedFile, construct: &CodeConstruct) -> bool {
     // Check if the method has @staticmethod decorator
     let decorators = extract_decorators(parsed_file, construct);
     decorators.contains(&"staticmethod".to_string())
 }
 
-fn extract_decorators(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> Vec<String> {
+fn extract_decorators(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Vec<String> {
     let mut decorators = Vec::new();
 
     // Look for decorator nodes
@@ -782,10 +758,7 @@ fn extract_decorators(
     decorators
 }
 
-fn is_inside_class(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> Result<bool> {
+fn is_inside_class(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Result<bool> {
     // Look for parent class_definition
     let class_query = format!(
         "(class_definition
@@ -804,16 +777,13 @@ fn is_inside_class(
             }
             Ok(false)
         }
-        Err(e) => Err(anyhow::anyhow!(
-            "Failed to search for class definitions: {}",
-            e
-        )),
+        Err(e) => Err(anyhow!("Failed to search for class definitions: {}", e)),
     }
 }
 
 fn find_superclasses(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
+    parsed_file: &ParsedFile,
+    construct: &CodeConstruct,
 ) -> Result<Option<Vec<String>>> {
     let mut superclasses = Vec::new();
 
@@ -836,7 +806,7 @@ fn find_superclasses(
                 }
             }
         }
-        Err(e) => return Err(anyhow::anyhow!("Failed to search for superclasses: {}", e)),
+        Err(e) => return Err(anyhow!("Failed to search for superclasses: {}", e)),
     }
 
     if superclasses.is_empty() {
@@ -846,7 +816,7 @@ fn find_superclasses(
     }
 }
 
-fn inherits_from_enum(parsed_file: &tree_parser::ParsedFile) -> Result<bool> {
+fn inherits_from_enum(parsed_file: &ParsedFile) -> Result<bool> {
     // Look for import statements that import Enum
     let import_nodes = tree_parser::search_by_node_type(parsed_file, "import_statement", None);
 
@@ -887,10 +857,7 @@ fn inherits_from_enum(parsed_file: &tree_parser::ParsedFile) -> Result<bool> {
     Ok(false)
 }
 
-fn is_property_decorator(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> Result<bool> {
+fn is_property_decorator(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Result<bool> {
     // Look for decorator nodes within the decorated definition
     let decorator_nodes = tree_parser::search_by_node_type(parsed_file, "decorator", None);
 
@@ -915,10 +882,7 @@ fn is_property_decorator(
     Ok(false)
 }
 
-fn has_setter(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
-) -> bool {
+fn has_setter(parsed_file: &ParsedFile, construct: &CodeConstruct) -> bool {
     // Look for setter method with same name as property
     if let Some(prop_name) = &construct.name {
         let setter_query = format!(
@@ -950,8 +914,8 @@ fn has_setter(
 }
 
 fn extract_enum_values(
-    parsed_file: &tree_parser::ParsedFile,
-    construct: &tree_parser::CodeConstruct,
+    parsed_file: &ParsedFile,
+    construct: &CodeConstruct,
 ) -> Result<Vec<EnumValue>> {
     let mut values = Vec::new();
 
@@ -985,16 +949,16 @@ fn extract_enum_values(
                 }
             }
         }
-        Err(e) => return Err(anyhow::anyhow!("Failed to search for enum values: {}", e)),
+        Err(e) => return Err(anyhow!("Failed to search for enum values: {}", e)),
     }
 
     Ok(values)
 }
 
 fn is_within_construct(
-    _parsed_file: &tree_parser::ParsedFile,
-    inner: &tree_parser::CodeConstruct,
-    outer: &tree_parser::CodeConstruct,
+    _parsed_file: &ParsedFile,
+    inner: &CodeConstruct,
+    outer: &CodeConstruct,
 ) -> bool {
     // Check if inner construct is within outer construct using position information
     let (inner_start, inner_end, outer_start, outer_end) = (
