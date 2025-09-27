@@ -1,11 +1,19 @@
 use anyhow::Result;
 use chrono;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
+use std::{fs::read_dir, io::Write, path::Path};
 use tracing::{info, warn};
 use tracing_subscriber::fmt;
+
+#[derive(Debug, Default, ValueEnum, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[clap(rename_all = "lower")]
+enum OutFormat {
+    #[default]
+    Json,
+    Csv,
+    Markdown,
+}
 
 #[derive(Parser)]
 #[command(
@@ -16,10 +24,6 @@ struct Cli {
     /// Path to Python source directory
     #[arg(long)]
     source_path: String,
-
-    /// Output JSON file path
-    #[arg(long)]
-    output: Option<String>,
 
     /// Query mode: filter classes and methods
     #[arg(long)]
@@ -39,7 +43,7 @@ struct Cli {
 
     /// Export format (json, csv, markdown)
     #[arg(long, default_value = "json")]
-    format: String,
+    format: OutFormat,
 
     /// Generate progress report for PROGRESS.md
     #[arg(long)]
@@ -143,28 +147,7 @@ async fn main() -> Result<()> {
         generate_progress_report(&api)?;
     } else if let Some(query) = &cli.query {
         execute_query(&api, query)?;
-    } else if let Some(output_path) = &cli.output {
-        // Full export
-        match cli.format.as_str() {
-            "json" => {
-                let json = serde_json::to_string_pretty(&api)?;
-                fs::write(output_path, json)?;
-                info!("Extracted API data to: {}", output_path);
-            }
-            "csv" => {
-                export_to_csv(&api, output_path)?;
-                info!("Exported API data to CSV: {}", output_path);
-            }
-            "markdown" => {
-                export_to_markdown(&api, output_path)?;
-                info!("Exported API data to Markdown: {}", output_path);
-            }
-            _ => {
-                return Err(anyhow::anyhow!("Unsupported format: {}", cli.format));
-            }
-        }
     } else {
-        // Default: show summary
         show_summary(&api);
     }
 
@@ -193,7 +176,7 @@ async fn parse_python_api(source_path: &str) -> Result<PythonApi> {
         parse_futures: &mut Vec<tokio::task::JoinHandle<Option<FileApi>>>,
         total_files: &mut usize,
     ) -> Result<()> {
-        for entry in fs::read_dir(dir)? {
+        for entry in read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
 
@@ -447,6 +430,10 @@ fn parse_property_definition(
         is_readonly: !has_setter(parsed_file, property_construct),
     })
 }
+
+// let json = serde_json::to_string_pretty(&api)?;
+// export_to_csv(&api, output_path)?;
+// export_to_markdown(&api, output_path)?;
 
 // Helper functions for extraction
 fn extract_docstring(
@@ -973,7 +960,7 @@ fn execute_query(api: &PythonApi, _query: &str) -> Result<()> {
             metadata: api.metadata.clone(),
         };
 
-        output_filtered_api(&filtered_api, &cli.format)?;
+        output_filtered_api(&filtered_api, cli.format)?;
         return Ok(());
     }
 
@@ -1001,36 +988,27 @@ fn execute_query(api: &PythonApi, _query: &str) -> Result<()> {
         metadata: api.metadata.clone(),
     };
 
-    output_filtered_api(&filtered_api, &cli.format)?;
+    output_filtered_api(&filtered_api, cli.format)?;
     Ok(())
 }
 
-fn output_filtered_api(api: &PythonApi, format: &str) -> Result<()> {
-    match format {
-        "json" => {
-            let json = serde_json::to_string_pretty(api)?;
-            println!("{}", json);
-        }
-        "csv" => {
-            export_to_csv(api, "query_output.csv")?;
-        }
-        "markdown" => {
-            export_to_markdown(api, "query_output.md")?;
-        }
-        _ => {
-            return Err(anyhow::anyhow!("Unsupported format: {}", format));
-        }
-    }
+fn output_filtered_api(api: &PythonApi, format: OutFormat) -> Result<()> {
+    let output = match format {
+        OutFormat::Json => serde_json::to_string_pretty(api)?,
+        OutFormat::Csv => to_csv(api)?,
+        OutFormat::Markdown => to_markdown(api)?,
+    };
+
+    println!("{output}");
+
     Ok(())
 }
 
-fn export_to_csv(api: &PythonApi, output_path: &str) -> Result<()> {
-    use std::io::Write;
-
-    let mut file = std::fs::File::create(output_path)?;
+fn to_csv(api: &PythonApi) -> Result<String> {
+    let mut csv = Vec::new();
 
     // Write CSV header
-    writeln!(file, "Type,Name,File,Method,Parameters,IsAsync,IsStatic")?;
+    writeln!(csv, "Type,Name,File,Method,Parameters,IsAsync,IsStatic")?;
 
     // Export classes and methods
     for class in &api.classes {
@@ -1041,7 +1019,7 @@ fn export_to_csv(api: &PythonApi, output_path: &str) -> Result<()> {
                 .map(|p| format!("{}: {}", p.name, p.type_hint))
                 .collect();
             writeln!(
-                file,
+                csv,
                 "Class,{},\"{}\",{},\"{}\",{},{}",
                 class.name,
                 class.file_path,
@@ -1061,7 +1039,7 @@ fn export_to_csv(api: &PythonApi, output_path: &str) -> Result<()> {
             .map(|p| format!("{}: {}", p.name, p.type_hint))
             .collect();
         writeln!(
-            file,
+            csv,
             "Function,{},\"{}\",,\"{}\",{},",
             func.name,
             func.file_path,
@@ -1070,109 +1048,101 @@ fn export_to_csv(api: &PythonApi, output_path: &str) -> Result<()> {
         )?;
     }
 
-    Ok(())
+    Ok(String::from_utf8_lossy(&csv).to_string())
 }
 
-fn export_to_markdown(api: &PythonApi, output_path: &str) -> Result<()> {
-    use std::io::Write;
+fn to_markdown(api: &PythonApi) -> Result<String> {
+    let mut md = Vec::new();
 
-    let mut file = std::fs::File::create(output_path)?;
-
-    writeln!(file, "# iTerm2 Python API Reference\n")?;
+    writeln!(md, "# iTerm2 Python API Reference\n")?;
+    writeln!(md, "Generated on: {}\n", api.metadata.extraction_timestamp)?;
+    writeln!(md, "- **Total Files**: {}", api.metadata.total_files)?;
+    writeln!(md, "- **Total Classes**: {}", api.metadata.total_classes)?;
     writeln!(
-        file,
-        "Generated on: {}\n",
-        api.metadata.extraction_timestamp
-    )?;
-    writeln!(file, "- **Total Files**: {}", api.metadata.total_files)?;
-    writeln!(file, "- **Total Classes**: {}", api.metadata.total_classes)?;
-    writeln!(
-        file,
+        md,
         "- **Total Functions**: {}",
         api.metadata.total_functions
     )?;
-    writeln!(file, "- **Total Enums**: {}\n", api.metadata.total_enums)?;
+    writeln!(md, "- **Total Enums**: {}\n", api.metadata.total_enums)?;
 
     // Export classes
     for class in &api.classes {
-        writeln!(file, "## Class: `{}`\n", class.name)?;
-        writeln!(file, "**File**: `{}`", class.file_path)?;
+        writeln!(md, "## Class: `{}`\n", class.name)?;
+        writeln!(md, "**File**: `{}`", class.file_path)?;
         if !class.inherits.is_empty() {
-            writeln!(file, "**Inherits**: {}", class.inherits.join(", "))?;
+            writeln!(md, "**Inherits**: {}", class.inherits.join(", "))?;
         }
-        writeln!(file, "**Line**: {}", class.line_number.unwrap_or(0))?;
-        writeln!(file, "**Methods**: {}\n", class.methods.len())?;
+        writeln!(md, "**Line**: {}", class.line_number.unwrap_or(0))?;
+        writeln!(md, "**Methods**: {}\n", class.methods.len())?;
 
         if !class.methods.is_empty() {
-            writeln!(file, "### Methods\n")?;
+            writeln!(md, "### Methods\n")?;
             for method in &class.methods {
-                writeln!(file, "#### `{}`", method.signature)?;
+                writeln!(md, "#### `{}`", method.signature)?;
                 if method.is_async {
-                    writeln!(file, "- **Async**: Yes")?;
+                    writeln!(md, "- **Async**: Yes")?;
                 }
                 if method.is_static {
-                    writeln!(file, "- **Static**: Yes")?;
+                    writeln!(md, "- **Static**: Yes")?;
                 }
                 if !method.parameters.is_empty() {
-                    writeln!(file, "- **Parameters**:")?;
+                    writeln!(md, "- **Parameters**:")?;
                     for param in &method.parameters {
-                        writeln!(file, "  - `{}`: `{}`", param.name, param.type_hint)?;
+                        writeln!(md, "  - `{}`: `{}`", param.name, param.type_hint)?;
                     }
                 }
                 if !method.returns.is_empty() && method.returns != "Any" {
-                    writeln!(file, "- **Returns**: `{}`", method.returns)?;
+                    writeln!(md, "- **Returns**: `{}`", method.returns)?;
                 }
-                writeln!(file)?;
+                writeln!(md)?;
             }
         }
     }
 
     // Export functions
     if !api.functions.is_empty() {
-        writeln!(file, "## Functions\n")?;
+        writeln!(md, "## Functions\n")?;
         for func in &api.functions {
-            writeln!(file, "### `{}`\n", func.signature)?;
-            writeln!(file, "**File**: `{}`", func.file_path)?;
+            writeln!(md, "### `{}`\n", func.signature)?;
+            writeln!(md, "**File**: `{}`", func.file_path)?;
             if func.is_async {
-                writeln!(file, "- **Async**: Yes")?;
+                writeln!(md, "- **Async**: Yes")?;
             }
             if !func.parameters.is_empty() {
-                writeln!(file, "- **Parameters**:")?;
+                writeln!(md, "- **Parameters**:")?;
                 for param in &func.parameters {
-                    writeln!(file, "  - `{}`: `{}`", param.name, param.type_hint)?;
+                    writeln!(md, "  - `{}`: `{}`", param.name, param.type_hint)?;
                 }
             }
             if !func.returns.is_empty() && func.returns != "Any" {
-                writeln!(file, "- **Returns**: `{}`", func.returns)?;
+                writeln!(md, "- **Returns**: `{}`", func.returns)?;
             }
-            writeln!(file)?;
+            writeln!(md)?;
         }
     }
 
-    Ok(())
+    Ok(String::from_utf8_lossy(&md).to_string())
 }
 
-fn generate_progress_report(api: &PythonApi) -> Result<()> {
-    use std::io::Write;
+fn generate_progress_report(api: &PythonApi) -> Result<String> {
+    let mut report = Vec::new();
 
-    let mut file = std::fs::File::create("PROGRESS_UPDATE.md")?;
-
-    writeln!(file, "# iTerm2 Python API Analysis Report\n")?;
+    writeln!(report, "# iTerm2 Python API Analysis Report\n")?;
     writeln!(
-        file,
+        report,
         "Generated on: {}\n",
         api.metadata.extraction_timestamp
     )?;
 
     // Key classes analysis
     let key_classes = ["App", "Window", "Tab", "Session"];
-    writeln!(file, "## Key Classes Analysis\n")?;
+    writeln!(report, "## Key Classes Analysis\n")?;
 
     for class_name in &key_classes {
         if let Some(class) = api.classes.iter().find(|c| c.name == *class_name) {
-            writeln!(file, "### `{}`\n", class.name)?;
-            writeln!(file, "- **Total Methods**: {}", class.methods.len())?;
-            writeln!(file, "- **File**: `{}`", class.file_path)?;
+            writeln!(report, "### `{}`\n", class.name)?;
+            writeln!(report, "- **Total Methods**: {}", class.methods.len())?;
+            writeln!(report, "- **File**: `{}`", class.file_path)?;
 
             // Method analysis
             let async_methods = class.methods.iter().filter(|m| m.is_async).count();
@@ -1183,27 +1153,27 @@ fn generate_progress_report(api: &PythonApi) -> Result<()> {
                 .filter(|m| !m.parameters.is_empty())
                 .count();
 
-            writeln!(file, "- **Async Methods**: {}", async_methods)?;
-            writeln!(file, "- **Static Methods**: {}", static_methods)?;
+            writeln!(report, "- **Async Methods**: {}", async_methods)?;
+            writeln!(report, "- **Static Methods**: {}", static_methods)?;
             writeln!(
-                file,
+                report,
                 "- **Methods with Parameters**: {}",
                 methods_with_params
             )?;
 
             // Sample methods
             if !class.methods.is_empty() {
-                writeln!(file, "- **Sample Methods**:")?;
+                writeln!(report, "- **Sample Methods**:")?;
                 for method in class.methods.iter().take(3) {
-                    writeln!(file, "  - `{}`", method.signature)?;
+                    writeln!(report, "  - `{}`", method.signature)?;
                 }
             }
-            writeln!(file)?;
+            writeln!(report)?;
         }
     }
 
     // Parameter frequency analysis
-    writeln!(file, "## Parameter Frequency Analysis\n")?;
+    writeln!(report, "## Parameter Frequency Analysis\n")?;
     let mut param_counts = std::collections::HashMap::new();
 
     for class in &api.classes {
@@ -1223,14 +1193,14 @@ fn generate_progress_report(api: &PythonApi) -> Result<()> {
     let mut sorted_params: Vec<_> = param_counts.into_iter().collect();
     sorted_params.sort_by(|a, b| b.1.cmp(&a.1));
 
-    writeln!(file, "| Parameter | Count |")?;
-    writeln!(file, "|-----------|-------|")?;
+    writeln!(report, "| Parameter | Count |")?;
+    writeln!(report, "|-----------|-------|")?;
     for (param, count) in sorted_params.iter().take(10) {
-        writeln!(file, "| `{}` | {} |", param, count)?;
+        writeln!(report, "| `{}` | {} |", param, count)?;
     }
 
     // Type analysis
-    writeln!(file, "\n## Type Hint Analysis\n")?;
+    writeln!(report, "\n## Type Hint Analysis\n")?;
     let mut type_counts = std::collections::HashMap::new();
 
     for class in &api.classes {
@@ -1250,14 +1220,15 @@ fn generate_progress_report(api: &PythonApi) -> Result<()> {
     let mut sorted_types: Vec<_> = type_counts.into_iter().collect();
     sorted_types.sort_by(|a, b| b.1.cmp(&a.1));
 
-    writeln!(file, "| Type | Count |")?;
-    writeln!(file, "|------|-------|")?;
+    writeln!(report, "| Type | Count |")?;
+    writeln!(report, "|------|-------|")?;
     for (type_hint, count) in sorted_types.iter().take(10) {
-        writeln!(file, "`{}` | {} |", type_hint, count)?;
+        writeln!(report, "`{}` | {} |", type_hint, count)?;
     }
 
     info!("Progress report generated: PROGRESS_UPDATE.md");
-    Ok(())
+
+    Ok(String::from_utf8_lossy(&report).to_string())
 }
 
 fn show_summary(api: &PythonApi) {
