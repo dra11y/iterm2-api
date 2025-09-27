@@ -3,6 +3,8 @@
 ## Project Overview
 Rust library for programmatically controlling iTerm2 via its official WebSocket API over Unix domain socket. Alternative to Python API.
 
+**API Documentation**: [docs/...](docs/...) (downloaded from https://iterm2.com/python-api)
+
 ## Core Architecture
 - **Protocol**: WebSocket over Unix domain socket at `~/Library/Application Support/iTerm2/private/socket`
 - **Serialization**: Protocol Buffers (proto2) from `proto/api.proto` (downloaded from iTerm2 upstream)

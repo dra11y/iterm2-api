@@ -24,12 +24,15 @@ dirs = "6.0.0"
 url = "2.5.7"
 
 [build-dependencies]
-anyhow = "1.0.100"
+anyhow = "1"
 protobuf-codegen = "3.7.2"
 
 [[example]]
 name = "basic_connection"
 path = "examples/basic_connection.rs"
+
+[workspace]
+members = ["download-docs"]
 
 [workspace.metadata.dylint]
 libraries = [{ path = "/Users/tom/apps/toms-lints" }]

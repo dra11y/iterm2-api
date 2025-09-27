@@ -1,0 +1,268 @@
+
+<!DOCTYPE html>
+
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>Running a Script &#8212; iTerm2 Python API 0.26 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <meta name="HandheldFriendly" content="True">
+    <meta name="MobileOptimized" content="320">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  </head><body>
+  <header >
+    <div class="row">
+      <div class="small-12 medium-12 large-10 large-centered columns wide-row">
+        <div class="text-center"><a href="/index.html"><img src="https://iterm2.com/img/logo2x.jpg" width=800 height=312></a></div>
+        <div class="sticky contain-to-grid">
+          <nav class="top-bar" data-topbar>
+            <ul class="title-area">
+              <li class="name">
+
+              </li>
+              <li class="toggle-topbar menu-icon"><a href="#">Menu</a></li>
+              <li class="small-screen-donate">
+		  <a href="/donate.html"><img src="https://iterm2.com/images/DonateButton.png" width="92" height="26"></a>
+                </li>
+            </ul>
+
+            <section class="top-bar-section">
+              <!-- Right Nav Section -->
+              <ul class="right"> <li>
+		  <a href="/donate.html"><img src="https://iterm2.com/images/DonateButton.png" width="92" height="26"></a>
+                </li>
+              </ul>
+            </li>
+          </ul>
+
+          <!-- Left Nav Section -->
+          <ul class="left">
+            <li><a href="/index.html">Home</a></li>
+            <li ><a href="/news.html">News</a></li>
+            <li ><a href="/features.html">Features</a></li>
+            <li ><a href="/faq.html">FAQ</a></li>
+            <li class="active"><a href="/documentation.html">Documentation</a></li>
+            <li ><a href="/downloads.html">Downloads</a></li>
+          </ul>
+        </section>
+      </nav>
+    </div>
+  </div>
+</div>
+</header>
+
+
+
+
+    <div class="document">
+<div class="row">
+    <div class="small-12 medium-12 large-10 large-centered columns wide-row">
+        <div class="main panel">
+
+            <div class="doc-wrapper" style="text-align: right">
+                <a href="/documentation.html">Documentation</a> | <a href="/python-api">Python API</a>
+            </div>
+
+            <hr/>
+
+      <div class="documentwrapper">
+	<div class="bodywrapper">
+	  <div class="body" role="main">
+	    
+  <section id="running-a-script">
+<h1>Running a Script<a class="headerlink" href="#running-a-script" title="Permalink to this headline">¶</a></h1>
+<p>There are many ways to run a script:</p>
+<ol class="arabic simple">
+<li><p>From the Scripts menu.</p></li>
+<li><p>At the command line.</p></li>
+<li><p>Auto-run scripts launched when iTerm2 starts.</p></li>
+<li><p>With an interactive interpreter called a REPL.</p></li>
+<li><p>From the Open Quickly window.</p></li>
+</ol>
+<section id="scripts-menu">
+<h2>Scripts Menu<a class="headerlink" href="#scripts-menu" title="Permalink to this headline">¶</a></h2>
+<p>The <cite>Scripts</cite> menu contains all the scripts in
+<cite>$HOME/Library/ApplicationSupport/iTerm2/Scripts</cite>. The following files are
+included:</p>
+<ul class="simple">
+<li><p>Any file ending in <cite>.py</cite>. These correspond to “basic” scripts.</p></li>
+<li><p>Any folder having an <cite>itermenv</cite> folder within it. These correspond to “full environment” scripts.</p></li>
+<li><p>AppleScript files, which are not the concern of this document.</p></li>
+</ul>
+<p>To run a script from the menu, simply select it and it will run.</p>
+</section>
+<section id="command-line">
+<h2>Command Line<a class="headerlink" href="#command-line" title="Permalink to this headline">¶</a></h2>
+<p>Your machine probably has <a class="reference external" href="https://xkcd.com/1987/">many instances of Python</a>
+installed in different places. Each installation of Python may have different
+modules installed. Python determines the path to its modules by examining the
+location of the <cite>python3</cite> executable. For this reason, it’s important to use
+the right <cite>python3</cite> so that your script’s dependencies (such as the <cite>iterm2</cite>
+module) can be satisfied.</p>
+<p>The standard iTerm2 Python installation is at
+<cite>~/Library/ApplicationSupport/iTerm2/iterm2env/versions/*/bin/python3</cite>.
+This is the so-called “Basic” environment.</p>
+<p>If you create a script with the “Full Environment” its instance of Python
+will be in
+<cite>~/Library/ApplicationSupport/iTerm2/Scripts/YourScript/iterm2env/versions/*/bin/python3</cite>.</p>
+<p>Internally, iTerm2 runs a basic script by invoking:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="o">~/</span><span class="n">Library</span><span class="o">/</span><span class="n">ApplicationSupport</span><span class="o">/</span><span class="n">iTerm2</span><span class="o">/</span><span class="n">iterm2env</span><span class="o">/</span><span class="n">versions</span><span class="o">/*/</span><span class="nb">bin</span><span class="o">/</span><span class="n">python3</span> <span class="n">YourScript</span><span class="o">.</span><span class="n">py</span>
+</pre></div>
+</div>
+<p>Scripts are stored in <cite>$HOME/Library/ApplicationSupport/iTerm2/Scripts</cite>.</p>
+<p>Make sure you don’t have a <cite>PYTHONPATH</cite> environment variable set when you run
+your script.</p>
+<p>If you prefer to use Python as installed by Homebrew, you can install modules
+yourself using the Homebrew-installed <cite>pip3</cite>, which should be in your path. At
+a minimum, install the <cite>iterm2</cite> module.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>iTerm2 creates the <cite>ApplicationSupport</cite> symlink to <cite>Application
+Support</cite> because shell scripts may not have spaces in their paths
+and the <cite>pip</cite> utiltiy does not work correctly in directories with
+spaces.</p>
+</div>
+<p>If you’d like your script to launch iTerm2, you’ll need to use pyobjc. To install it:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip3<span class="w"> </span>install<span class="w"> </span>pyobjc
+</pre></div>
+</div>
+<p>Then put this in your script:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">AppKit</span>
+<span class="n">bundle</span> <span class="o">=</span> <span class="s2">&quot;com.googlecode.iterm2&quot;</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">AppKit</span><span class="o">.</span><span class="n">NSRunningApplication</span><span class="o">.</span><span class="n">runningApplicationsWithBundleIdentifier_</span><span class="p">(</span><span class="n">bundle</span><span class="p">):</span>
+    <span class="n">AppKit</span><span class="o">.</span><span class="n">NSWorkspace</span><span class="o">.</span><span class="n">sharedWorkspace</span><span class="p">()</span><span class="o">.</span><span class="n">launchApplication_</span><span class="p">(</span><span class="s2">&quot;iTerm&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Note that the <cite>iterm2</cite> module includes <cite>pyobjc</cite> (which vends <cite>AppKit</cite>) as a dependency, so
+you don’t need to install it separately.</p>
+<p>The <cite>iterm2.run_forever</cite> or <cite>iterm2.run_until_complete</cite> call will block until
+it is able to make a connection, so you don’t need to add any logic that waits
+for the launch to complete. Just try to connect right away.</p>
+<p>When you run a script from the command line on iTerm2 version 3.3.9 or later you will
+be prompted for permission. This is a security measure to ensure that scripts not launched
+by iTerm2 are not being run without your knowledge. The purpose is to prevent untrusted
+code, such as Javascript that’s able to escape a web browser’s sandbox, from silently
+gaining access to your terminal.</p>
+<p>To circumvent the dialog, use the <cite>it2run</cite> script provided in
+<cite>iTerm.app/Resources/it2run</cite> to launch it. The <cite>it2run</cite> script uses
+<cite>osascript</cite> to ask iTerm2 to launch your Python script. macOS will ask for a
+one-time grant of permission for <cite>osascript</cite> to control iTerm2.</p>
+<p>You may also pass command line arguments to it2run that get forwarded to the script.
+For example:</p>
+<p><code class="docutils literal notranslate"><span class="pre">`</span>
+<span class="pre">/Applications/iTerm.app/Contents/Resources/it2run</span> <span class="pre">myscript.py</span> <span class="pre">firstarg</span> <span class="pre">secondarg</span> <span class="pre">thirdarg</span>
+<span class="pre">`</span></code></p>
+</section>
+<section id="auto-run-scripts">
+<h2>Auto-Run Scripts<a class="headerlink" href="#auto-run-scripts" title="Permalink to this headline">¶</a></h2>
+<p>If you’d like your script to launch automatically when iTerm2 starts, move it
+to <cite>$HOME/Library/ApplicationSupport/iTerm2/Scripts/AutoLaunch</cite>.</p>
+</section>
+<section id="repl">
+<span id="running-repl"></span><h2>REPL<a class="headerlink" href="#repl" title="Permalink to this headline">¶</a></h2>
+<p>iTerm2 also offers a <em>REPL</em>: a <em>Read-eval-print loop</em>. This is an interactive
+Python interpreter where you can experiment with the scripting API. You can
+enter commands and immediately see their results. It’s available from the menu
+item <cite>Scripts &gt; Open Python REPL</cite>. It will open a window with an interactive
+Python interpreter.</p>
+<p>The REPL uses the <cite>apython</cite> script provided by <a class="reference external" href="https://github.com/vxgmichel/aioconsole">aioconsole</a> which extends Python
+so that you can use <cite>await</cite> without having to put it inside an <cite>async</cite>
+function. In other words, you don’t need to write
+<cite>iterm2.run_until_complete(main)</cite> to launch a <cite>main</cite> function when in
+the REPL. Instead, a typical REPL session would begin with:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">iterm2</span>
+<span class="n">connection</span><span class="o">=</span><span class="k">await</span> <span class="n">iterm2</span><span class="o">.</span><span class="n">Connection</span><span class="o">.</span><span class="n">async_create</span><span class="p">()</span>
+<span class="n">app</span><span class="o">=</span><span class="k">await</span> <span class="n">iterm2</span><span class="o">.</span><span class="n">async_get_app</span><span class="p">(</span><span class="n">connection</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>When the REPL starts it prints a sample script so that you don’t need to
+remember this. You can just copy-paste it into the interpreter. Once you’ve got
+an <cite>app</cite> the rest is easy :).</p>
+</section>
+<section id="open-quickly">
+<h2>Open Quickly<a class="headerlink" href="#open-quickly" title="Permalink to this headline">¶</a></h2>
+<p>Enter the name of your script in the Open Quickly window to launch it.</p>
+<img alt="../_images/open_quickly.png" src="../_images/open_quickly.png" />
+<p>Continue to the next section, <a class="reference internal" href="daemons.html"><span class="doc">Daemons</span></a>.</p>
+<hr class="docutils" />
+<section id="other-sections">
+<h3>Other Sections<a class="headerlink" href="#other-sections" title="Permalink to this headline">¶</a></h3>
+<ul class="simple">
+<li><dl class="simple">
+<dt><a class="reference internal" href="../index.html"><span class="doc">Python API</span></a></dt><dd><ul>
+<li><p><a class="reference internal" href="index.html"><span class="doc">Python API Introduction</span></a></p></li>
+<li><p><a class="reference internal" href="example.html"><span class="doc">Example Script</span></a></p></li>
+<li><p>Running a Script</p></li>
+<li><p><a class="reference internal" href="daemons.html"><span class="doc">Daemons</span></a></p></li>
+<li><p><a class="reference internal" href="rpcs.html"><span class="doc">RPCs</span></a></p></li>
+<li><p><a class="reference internal" href="hooks.html"><span class="doc">Hooks</span></a></p></li>
+<li><p><a class="reference internal" href="troubleshooting.html"><span class="doc">Troubleshooting</span></a></p></li>
+</ul>
+</dd>
+</dl>
+</li>
+</ul>
+</section>
+</section>
+</section>
+<section id="indices-and-tables">
+<h1>Indices and tables<a class="headerlink" href="#indices-and-tables" title="Permalink to this headline">¶</a></h1>
+<ul class="simple">
+<li><p><a class="reference internal" href="../genindex.html"><span class="std std-ref">Index</span></a></p></li>
+<li><p><a class="reference internal" href="../search.html"><span class="std std-ref">Search Page</span></a></p></li>
+</ul>
+</section>
+
+
+	  </div>
+	</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Note: scripts.js not loaded because it breaks anchors, which Sphinx makes a lot of. -->
+<script type="text/javascript">
+  function showId(id) {
+    document.getElementById("changelist" + id).style.display = 'block';
+    document.getElementById("show" + id).style.display = 'none';
+    document.getElementById("hide" + id).style.display = 'inline';
+  }
+
+  function hideId(id) {
+    document.getElementById("changelist" + id).style.display = 'none';
+    document.getElementById("show" + id).style.display = 'inline';
+    document.getElementById("hide" + id).style.display = 'none';
+  }
+  $(document).foundation();
+</script>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2018, George Nachman.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.0.3</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="../_sources/tutorial/running.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

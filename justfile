@@ -7,9 +7,17 @@ fix:
     cargo dylint --all --fix -- --allow-dirty
     cargo fmt
 
+[working-directory: 'download-docs']
+download-docs:
+    cargo run
+
+# Download iTerm2 API docs using our custom Rust crawler
+download-api-docs-rust:
+    cd download-docs && RUST_LOG=info cargo run
+
 # Install global crate if not found (installs binstall first if not installed)
-@binstall what="":
-    (which {{what}} 2>&1 >/dev/null) || (cargo binstall --force -y {{what}}) || (cargo install --locked cargo-binstall && cargo binstall --force -y {{what}})
+@binstall what="" which=what:
+    (which {{which}} 2>&1 >/dev/null) || (cargo binstall --force -y {{what}}) || (cargo install --locked cargo-binstall && cargo binstall --force -y {{what}})
 
 readme: (binstall 'cargo-readme')
     cargo readme > README.md

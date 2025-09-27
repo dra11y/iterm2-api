@@ -1,0 +1,339 @@
+
+<!DOCTYPE html>
+
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>Status Bar &#8212; iTerm2 Python API 0.26 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Tab" href="tab.html" />
+    <link rel="prev" title="Session" href="session.html" />
+    <meta name="HandheldFriendly" content="True">
+    <meta name="MobileOptimized" content="320">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  </head><body>
+  <header >
+    <div class="row">
+      <div class="small-12 medium-12 large-10 large-centered columns wide-row">
+        <div class="text-center"><a href="/index.html"><img src="https://iterm2.com/img/logo2x.jpg" width=800 height=312></a></div>
+        <div class="sticky contain-to-grid">
+          <nav class="top-bar" data-topbar>
+            <ul class="title-area">
+              <li class="name">
+
+              </li>
+              <li class="toggle-topbar menu-icon"><a href="#">Menu</a></li>
+              <li class="small-screen-donate">
+		  <a href="/donate.html"><img src="https://iterm2.com/images/DonateButton.png" width="92" height="26"></a>
+                </li>
+            </ul>
+
+            <section class="top-bar-section">
+              <!-- Right Nav Section -->
+              <ul class="right"> <li>
+		  <a href="/donate.html"><img src="https://iterm2.com/images/DonateButton.png" width="92" height="26"></a>
+                </li>
+              </ul>
+            </li>
+          </ul>
+
+          <!-- Left Nav Section -->
+          <ul class="left">
+            <li><a href="/index.html">Home</a></li>
+            <li ><a href="/news.html">News</a></li>
+            <li ><a href="/features.html">Features</a></li>
+            <li ><a href="/faq.html">FAQ</a></li>
+            <li class="active"><a href="/documentation.html">Documentation</a></li>
+            <li ><a href="/downloads.html">Downloads</a></li>
+          </ul>
+        </section>
+      </nav>
+    </div>
+  </div>
+</div>
+</header>
+
+
+
+
+    <div class="document">
+<div class="row">
+    <div class="small-12 medium-12 large-10 large-centered columns wide-row">
+        <div class="main panel">
+
+            <div class="doc-wrapper" style="text-align: right">
+                <a href="/documentation.html">Documentation</a> | <a href="/python-api">Python API</a>
+            </div>
+
+            <hr/>
+
+      <div class="documentwrapper">
+	<div class="bodywrapper">
+	  <div class="body" role="main">
+	    
+  <section id="module-iterm2.statusbar">
+<span id="status-bar"></span><h1>Status Bar<a class="headerlink" href="#module-iterm2.statusbar" title="Permalink to this headline">¶</a></h1>
+<p>Status bar customization interfaces.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="iterm2.StatusBarComponent">
+<em class="property"><span class="pre">class</span> </em><span class="sig-name descname"><span class="pre">StatusBarComponent</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="pre">short_description:</span> <span class="pre">str,</span> <span class="pre">detailed_description:</span> <span class="pre">str,</span> <span class="pre">knobs:</span> <span class="pre">List[iterm2.statusbar.Knob],</span> <span class="pre">exemplar:</span> <span class="pre">str,</span> <span class="pre">update_cadence:</span> <span class="pre">Optional[float],</span> <span class="pre">identifier:</span> <span class="pre">str,</span> <span class="pre">icons:</span> <span class="pre">List[iterm2.statusbar.StatusBarComponent.Icon]</span> <span class="pre">=</span> <span class="pre">[],</span> <span class="pre">format:</span> <span class="pre">iterm2.statusbar.StatusBarComponent.Format</span> <span class="pre">=</span> <span class="pre">&lt;Format.PLAIN_TEXT:</span> <span class="pre">0&gt;</span></em><span class="sig-paren">)</span><a class="headerlink" href="#iterm2.StatusBarComponent" title="Permalink to this definition">¶</a></dt>
+<dd><p>Describes a script-provided status bar component showing a text value
+provided by a user-provided coroutine.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>short_description</strong> – Short description shown below the component in
+the picker UI.</p></li>
+<li><p><strong>detailed_description</strong> – Tool tip for the component in the picker UI.</p></li>
+<li><p><strong>knobs</strong> – List of configuration knobs. See the various Knob classes for
+details.</p></li>
+<li><p><strong>exemplar</strong> – Example value to show in the picker UI as the sample
+content of the component.</p></li>
+<li><p><strong>update_cadence</strong> – How frequently in seconds to reload the value, or
+<cite>None</cite> if it does not need to be reloaded on a timer.</p></li>
+<li><p><strong>identifier</strong> – A string uniquely identifying this component. Use a
+backwards domain name. For example, <cite>com.example.calculator</cite> for a
+calculator component provided by example.com.</p></li>
+<li><p><strong>icons</strong> – An array of <cite>StatusBarComponent.Icon</cite> objects. Should contain
+one with scale 1 and one with scale 2, of size 16x17 points. May be
+empty if you don’t want an icon.</p></li>
+</ul>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<ul class="simple">
+<li><p>Example “<a class="reference internal" href="examples/escindicator.html#escindicator-example"><span class="std std-ref">Escape Key Indicator</span></a>”</p></li>
+<li><p>Example “<a class="reference internal" href="examples/jsonpretty.html#jsonpretty-example"><span class="std std-ref">JSON Pretty Printer Status Bar Component</span></a>”</p></li>
+<li><p>Example “<a class="reference internal" href="examples/mousemode.html#mousemode-example"><span class="std std-ref">Status Bar Component: Mouse Mode</span></a>”</p></li>
+<li><p>Example “<a class="reference internal" href="examples/statusbar.html#statusbar-example"><span class="std std-ref">Status Bar Component</span></a>”</p></li>
+</ul>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="iterm2.StatusBarComponent.async_open_popover">
+<em class="property"><span class="pre">async</span> </em><span class="sig-name descname"><span class="pre">async_open_popover</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">html</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">size</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference internal" href="util.html#iterm2.util.Size" title="iterm2.util.Size"><span class="pre">iterm2.util.Size</span></a></span></em><span class="sig-paren">)</span><a class="headerlink" href="#iterm2.StatusBarComponent.async_open_popover" title="Permalink to this definition">¶</a></dt>
+<dd><p>Open a popover with a webview.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>session_id</strong> (<code class="docutils literal notranslate"><span class="pre">str</span></code>) – The session identifier.</p></li>
+<li><p><strong>html</strong> (<code class="docutils literal notranslate"><span class="pre">str</span></code>) – A string containing HTML to show.</p></li>
+<li><p><strong>size</strong> (<a class="reference internal" href="util.html#iterm2.util.Size" title="iterm2.util.Size"><code class="xref py py-class docutils literal notranslate"><span class="pre">Size</span></code></a>) – The desired size of the popover, a
+<a class="reference internal" href="util.html#iterm2.util.Size" title="iterm2.util.Size"><code class="xref py py-class docutils literal notranslate"><span class="pre">Size</span></code></a>.</p></li>
+</ul>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<p>Example “<a class="reference internal" href="examples/jsonpretty.html#jsonpretty-example"><span class="std std-ref">JSON Pretty Printer Status Bar Component</span></a>”</p>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="iterm2.StatusBarComponent.async_register">
+<em class="property"><span class="pre">async</span> </em><span class="sig-name descname"><span class="pre">async_register</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">connection</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference internal" href="connection.html#iterm2.connection.Connection" title="iterm2.connection.Connection"><span class="pre">iterm2.connection.Connection</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">coro</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/dev/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a><span class="p"><span class="pre">,</span> </span><a class="reference external" href="https://docs.python.org/dev/library/functions.html#float" title="(in Python v3.14)"><span class="pre">float</span></a><span class="p"><span class="pre">]</span></span></span> <span class="o"><span class="pre">=</span></span> <span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">onclick</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><span class="pre">Optional</span><span class="p"><span class="pre">[</span></span><span class="pre">Callable</span><span class="p"><span class="pre">[</span></span><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a><span class="p"><span class="pre">,</span> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span> </span><span class="pre">Coroutine</span><span class="p"><span class="pre">[</span></span><span class="pre">Any</span><span class="p"><span class="pre">,</span> </span><span class="pre">Any</span><span class="p"><span class="pre">,</span> </span><a class="reference external" href="https://docs.python.org/dev/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span> <span class="o"><span class="pre">=</span></span> <span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#iterm2.StatusBarComponent.async_register" title="Permalink to this definition">¶</a></dt>
+<dd><p>Registers the statusbar component.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>connection</strong> (<a class="reference internal" href="connection.html#iterm2.connection.Connection" title="iterm2.connection.Connection"><code class="xref py py-class docutils literal notranslate"><span class="pre">Connection</span></code></a>) – A <code class="xref py py-class docutils literal notranslate"><span class="pre">Connection</span></code>.</p></li>
+<li><p><strong>coro</strong> – An async function. Its arguments are reflected upon to
+determine the RPC’s signature. Only the names of the arguments are
+used. All arguments should be keyword arguments as any may be
+omitted at call time. It should take a special argument named
+“knobs” that is a dictionary with configuration settings. It may
+return a string or a list of strings. If it returns a list of
+strings then the longest one that fits will be used.</p></li>
+<li><p><strong>timeout</strong> – How long iTerm2 should wait before giving up on this
+function’s ever returning. <cite>None</cite> means to use the default timeout.</p></li>
+<li><p><strong>onclick</strong> – A coroutine to run when the user clicks on the status
+bar component. It should take one argument, which is the session_id
+of the session owning the status bar component that was clicked on.</p></li>
+</ul>
+</dd>
+</dl>
+<p>Example:</p>
+<blockquote>
+<div><div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">component</span> <span class="o">=</span> <span class="n">iterm2</span><span class="o">.</span><span class="n">StatusBarComponent</span><span class="p">(</span>
+    <span class="n">short_description</span> <span class="o">=</span> <span class="s2">&quot;Session ID&quot;</span><span class="p">,</span>
+    <span class="n">detailed_description</span> <span class="o">=</span> <span class="s2">&quot;Show the session&#39;s identifier&quot;</span><span class="p">,</span>
+    <span class="n">knobs</span> <span class="o">=</span> <span class="p">[],</span>
+    <span class="n">exemplar</span> <span class="o">=</span> <span class="s2">&quot;[session ID]&quot;</span><span class="p">,</span>
+    <span class="n">update_cadence</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">identifier</span> <span class="o">=</span> <span class="s2">&quot;com.iterm2.example.statusbar-rpc&quot;</span><span class="p">)</span>
+
+<span class="nd">@iterm2</span><span class="o">.</span><span class="n">StatusBarRPC</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">session_id_status_bar_coro</span><span class="p">(</span>
+        <span class="n">knobs</span><span class="p">,</span>
+        <span class="n">session_id</span> <span class="o">=</span> <span class="n">iterm2</span><span class="o">.</span><span class="n">Reference</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)):</span>
+    <span class="c1"># This status bar component shows the current session ID,</span>
+    <span class="c1"># which is useful for debugging scripts.</span>
+    <span class="k">return</span> <span class="n">session_id</span>
+
+<span class="nd">@iterm2</span><span class="o">.</span><span class="n">RPC</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">my_status_bar_click_handler</span><span class="p">(</span><span class="n">session_id</span><span class="p">):</span>
+    <span class="c1"># When you click the status bar it opens a popover with the</span>
+    <span class="c1"># message &quot;Hello World&quot;</span>
+    <span class="k">await</span> <span class="n">component</span><span class="o">.</span><span class="n">async_open_popover</span><span class="p">(</span>
+            <span class="n">session_id</span><span class="p">,</span>
+            <span class="s2">&quot;Hello world&quot;</span><span class="p">,</span>
+            <span class="n">iterm2</span><span class="o">.</span><span class="n">Size</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span> <span class="mi">200</span><span class="p">))</span>
+
+<span class="k">await</span> <span class="n">component</span><span class="o">.</span><span class="n">async_register</span><span class="p">(</span>
+        <span class="n">connection</span><span class="p">,</span>
+        <span class="n">session_id_status_bar_coro</span><span class="p">,</span>
+        <span class="n">onclick</span> <span class="o">=</span> <span class="n">my_status_bar_click_handler</span><span class="p">)</span>
+</pre></div>
+</div>
+</div></blockquote>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="iterm2.CheckboxKnob">
+<em class="property"><span class="pre">class</span> </em><span class="sig-name descname"><span class="pre">CheckboxKnob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">default_value</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/functions.html#bool" title="(in Python v3.14)"><span class="pre">bool</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">key</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em><span class="sig-paren">)</span><a class="headerlink" href="#iterm2.CheckboxKnob" title="Permalink to this definition">¶</a></dt>
+<dd><p>A status bar configuration knob to select a checkbox.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> – Description of the knob.</p></li>
+<li><p><strong>default_value</strong> – Default value (Boolean).</p></li>
+<li><p><strong>key</strong> – A unique string key identifying this knob.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="iterm2.StringKnob">
+<em class="property"><span class="pre">class</span> </em><span class="sig-name descname"><span class="pre">StringKnob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">placeholder</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">default_value</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">key</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em><span class="sig-paren">)</span><a class="headerlink" href="#iterm2.StringKnob" title="Permalink to this definition">¶</a></dt>
+<dd><p>A status bar configuration knob to select a string.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> – Description of the knob.</p></li>
+<li><p><strong>placeholder</strong> – Placeholder value (shown in gray) for the text field
+when it has no content.</p></li>
+<li><p><strong>default_value</strong> – Default value.</p></li>
+<li><p><strong>key</strong> – A unique string key identifying this knob.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="iterm2.PositiveFloatingPointKnob">
+<em class="property"><span class="pre">class</span> </em><span class="sig-name descname"><span class="pre">PositiveFloatingPointKnob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">default_value</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/functions.html#float" title="(in Python v3.14)"><span class="pre">float</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">key</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em><span class="sig-paren">)</span><a class="headerlink" href="#iterm2.PositiveFloatingPointKnob" title="Permalink to this definition">¶</a></dt>
+<dd><p>A status bar configuration knob to select a positive floating point
+value.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> – Description of the knob.</p></li>
+<li><p><strong>default_value</strong> – Default value.</p></li>
+<li><p><strong>key</strong> – A unique string key identifying this knob.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="iterm2.ColorKnob">
+<em class="property"><span class="pre">class</span> </em><span class="sig-name descname"><span class="pre">ColorKnob</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">default_value</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference internal" href="color.html#iterm2.Color" title="iterm2.color.Color"><span class="pre">iterm2.color.Color</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">key</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em><span class="sig-paren">)</span><a class="headerlink" href="#iterm2.ColorKnob" title="Permalink to this definition">¶</a></dt>
+<dd><p>A status bar configuration knob to select color.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> – Description of the knob.</p></li>
+<li><p><strong>default_value</strong> – Default value.</p></li>
+<li><p><strong>key</strong> – A unique string key identifying this knob</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="iterm2.StatusBarComponent.Icon">
+<em class="property"><span class="pre">class</span> </em><span class="sig-name descname"><span class="pre">Icon</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">scale</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/functions.html#float" title="(in Python v3.14)"><span class="pre">float</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">base64_data</span></span><span class="p"><span class="pre">:</span></span> <span class="n"><a class="reference external" href="https://docs.python.org/dev/library/stdtypes.html#str" title="(in Python v3.14)"><span class="pre">str</span></a></span></em><span class="sig-paren">)</span><a class="headerlink" href="#iterm2.StatusBarComponent.Icon" title="Permalink to this definition">¶</a></dt>
+<dd><p>Contains a status bar icon.</p>
+<p>The scale gives the ratio between pixels and points. For example, a
+32x34 image with scale 2 has a size of 16x17 points.</p>
+<p>Status bar icons should be 16x17 points. Use a two point margin around
+the edges. The text baseline is 3.5 points up from the bottom of the
+image.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>scale</strong> – 2 for a retina (high-DPI) image, or 1 for a regular
+(low-DPI) image.</p></li>
+<li><p><strong>base64_data</strong> – Base64-encoded data with the icon’s image in PNG
+format.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<hr class="docutils" />
+<section id="indices-and-tables">
+<h2>Indices and tables<a class="headerlink" href="#indices-and-tables" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="genindex.html"><span class="std std-ref">Index</span></a></p></li>
+<li><p><a class="reference internal" href="search.html"><span class="std std-ref">Search Page</span></a></p></li>
+</ul>
+</section>
+</section>
+
+
+	  </div>
+	</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Note: scripts.js not loaded because it breaks anchors, which Sphinx makes a lot of. -->
+<script type="text/javascript">
+  function showId(id) {
+    document.getElementById("changelist" + id).style.display = 'block';
+    document.getElementById("show" + id).style.display = 'none';
+    document.getElementById("hide" + id).style.display = 'inline';
+  }
+
+  function hideId(id) {
+    document.getElementById("changelist" + id).style.display = 'none';
+    document.getElementById("show" + id).style.display = 'inline';
+    document.getElementById("hide" + id).style.display = 'none';
+  }
+  $(document).foundation();
+</script>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2018, George Nachman.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.0.3</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="_sources/statusbar.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

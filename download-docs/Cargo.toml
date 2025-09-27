@@ -1,0 +1,11 @@
+[package]
+name = "download-docs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+spider = { version = "2.37.159", features = ["encoding", "io_uring", "regex", "reqwest_rustls_tls", "sync", "ua_generator"], default-features = false }
+url = "2.5"
+tokio = { version = "1.0", features = ["full"] }
+log = "0.4"
+env_logger = "0.11"
