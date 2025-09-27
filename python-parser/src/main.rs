@@ -7,7 +7,9 @@ use std::{fs::read_dir, io::Write, path::Path};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 use tracing_subscriber::fmt;
-use tree_parser::{CodeConstruct, ParsedFile};
+use tree_parser::{
+    CodeConstruct, Language, ParsedFile, parse_file, search_by_node_type, search_by_query,
+};
 
 #[derive(Debug, Default, ValueEnum, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[clap(rename_all = "lower")]
@@ -265,8 +267,7 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
     let file_str = file_path.to_string_lossy().to_string();
 
     // Parse the Python file using tree-parser
-    let parsed_file = match tree_parser::parse_file(&file_str, tree_parser::Language::Python).await
-    {
+    let parsed_file = match parse_file(&file_str, Language::Python).await {
         Ok(parsed) => parsed,
         Err(e) => {
             warn!("Failed to parse file {}: {}", file_path.display(), e);
@@ -283,7 +284,7 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
     let mut functions = Vec::new();
 
     // Find all class definitions
-    let class_constructs = tree_parser::search_by_node_type(&parsed_file, "class_definition", None);
+    let class_constructs = search_by_node_type(&parsed_file, "class_definition", None);
     for class_construct in class_constructs {
         if let Some(_class_name) = &class_construct.name {
             match parse_class_definition(&parsed_file, &class_construct, file_path) {
@@ -298,8 +299,7 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
     }
 
     // Find all function definitions (not inside classes)
-    let function_constructs =
-        tree_parser::search_by_node_type(&parsed_file, "function_definition", None);
+    let function_constructs = search_by_node_type(&parsed_file, "function_definition", None);
     for func_construct in function_constructs {
         if let Some(_func_name) = &func_construct.name {
             // Check if this function is not inside a class
@@ -328,9 +328,7 @@ async fn parse_python_file(file_path: &Path) -> Result<FileApi> {
     // First check if Enum is imported in this file
     match inherits_from_enum(&parsed_file) {
         Ok(true) => {
-            let all_class_constructs =
-                tree_parser::search_by_node_type(&parsed_file, "class_definition", None);
-
+            let all_class_constructs = search_by_node_type(&parsed_file, "class_definition", None);
             for class_construct in all_class_constructs {
                 if let Some(_class_name) = &class_construct.name {
                     // Check if it inherits from Enum
@@ -395,8 +393,7 @@ fn parse_class_definition(
     }
 
     // Find methods inside this class - simpler approach
-    let all_function_constructs =
-        tree_parser::search_by_node_type(parsed_file, "function_definition", None);
+    let all_function_constructs = search_by_node_type(parsed_file, "function_definition", None);
     for func_construct in all_function_constructs {
         if is_within_construct(parsed_file, &func_construct, class_construct) {
             if let Some(_method_name) = &func_construct.name {
@@ -409,8 +406,7 @@ fn parse_class_definition(
     }
 
     // Find properties (decorated with @property) - simpler approach
-    let all_decorated_constructs =
-        tree_parser::search_by_node_type(parsed_file, "decorated_definition", None);
+    let all_decorated_constructs = search_by_node_type(parsed_file, "decorated_definition", None);
     for decorated_construct in all_decorated_constructs {
         if is_within_construct(parsed_file, &decorated_construct, class_construct) {
             match is_property_decorator(parsed_file, &decorated_construct) {
@@ -521,7 +517,7 @@ fn parse_property_definition(
 // Helper functions for extraction
 fn extract_docstring(parsed_file: &ParsedFile, construct: &CodeConstruct) -> String {
     // Look for string literals within the construct
-    let string_literals = tree_parser::search_by_node_type(parsed_file, "string_literal", None);
+    let string_literals = search_by_node_type(parsed_file, "string_literal", None);
 
     for string_literal in string_literals {
         if is_within_construct(parsed_file, &string_literal, construct) {
@@ -702,7 +698,7 @@ fn extract_return_type(parsed_file: &ParsedFile, construct: &CodeConstruct) -> S
         )"
     );
 
-    if let Ok(return_constructs) = tree_parser::search_by_query(parsed_file, &return_query) {
+    if let Ok(return_constructs) = search_by_query(parsed_file, &return_query) {
         for return_construct in return_constructs {
             if is_within_construct(parsed_file, &return_construct, construct) {
                 if !return_construct.source_code.is_empty() {
@@ -717,7 +713,7 @@ fn extract_return_type(parsed_file: &ParsedFile, construct: &CodeConstruct) -> S
 
 fn is_async_function(parsed_file: &ParsedFile, construct: &CodeConstruct) -> bool {
     // Look for async keyword nodes within the function definition
-    let async_nodes = tree_parser::search_by_node_type(parsed_file, "async", None);
+    let async_nodes = search_by_node_type(parsed_file, "async", None);
 
     for async_node in async_nodes {
         if is_within_construct(parsed_file, &async_node, construct) {
@@ -738,13 +734,12 @@ fn extract_decorators(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Ve
     let mut decorators = Vec::new();
 
     // Look for decorator nodes
-    let decorator_nodes = tree_parser::search_by_node_type(parsed_file, "decorator", None);
+    let decorator_nodes = search_by_node_type(parsed_file, "decorator", None);
 
     for decorator_node in decorator_nodes {
         if is_within_construct(parsed_file, &decorator_node, construct) {
             // Look for identifiers within this decorator
-            let decorator_identifiers =
-                tree_parser::search_by_node_type(parsed_file, "identifier", None);
+            let decorator_identifiers = search_by_node_type(parsed_file, "identifier", None);
             for identifier in decorator_identifiers {
                 if is_within_construct(parsed_file, &identifier, &decorator_node) {
                     if let Some(name) = &identifier.name {
@@ -768,7 +763,7 @@ fn is_inside_class(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Resul
         )"
     );
 
-    match tree_parser::search_by_query(parsed_file, &class_query) {
+    match search_by_query(parsed_file, &class_query) {
         Ok(class_constructs) => {
             for class_construct in class_constructs {
                 if is_within_construct(parsed_file, construct, &class_construct) {
@@ -796,7 +791,7 @@ fn find_superclasses(
         )"
     );
 
-    match tree_parser::search_by_query(parsed_file, &superclass_query) {
+    match search_by_query(parsed_file, &superclass_query) {
         Ok(superclass_constructs) => {
             for superclass_construct in superclass_constructs {
                 if is_within_construct(parsed_file, &superclass_construct, construct) {
@@ -818,11 +813,11 @@ fn find_superclasses(
 
 fn inherits_from_enum(parsed_file: &ParsedFile) -> Result<bool> {
     // Look for import statements that import Enum
-    let import_nodes = tree_parser::search_by_node_type(parsed_file, "import_statement", None);
+    let import_nodes = search_by_node_type(parsed_file, "import_statement", None);
 
     for import_node in import_nodes {
         // Look for identifiers within import statements
-        let import_identifiers = tree_parser::search_by_node_type(parsed_file, "identifier", None);
+        let import_identifiers = search_by_node_type(parsed_file, "identifier", None);
 
         for identifier in import_identifiers {
             if is_within_construct(parsed_file, &identifier, &import_node) {
@@ -836,12 +831,11 @@ fn inherits_from_enum(parsed_file: &ParsedFile) -> Result<bool> {
     }
 
     // Also check for from imports
-    let import_from_nodes =
-        tree_parser::search_by_node_type(parsed_file, "import_from_statement", None);
+    let import_from_nodes = search_by_node_type(parsed_file, "import_from_statement", None);
 
     for import_from_node in import_from_nodes {
         // Look for identifiers within import from statements
-        let import_identifiers = tree_parser::search_by_node_type(parsed_file, "identifier", None);
+        let import_identifiers = search_by_node_type(parsed_file, "identifier", None);
 
         for identifier in import_identifiers {
             if is_within_construct(parsed_file, &identifier, &import_from_node) {
@@ -859,13 +853,12 @@ fn inherits_from_enum(parsed_file: &ParsedFile) -> Result<bool> {
 
 fn is_property_decorator(parsed_file: &ParsedFile, construct: &CodeConstruct) -> Result<bool> {
     // Look for decorator nodes within the decorated definition
-    let decorator_nodes = tree_parser::search_by_node_type(parsed_file, "decorator", None);
+    let decorator_nodes = search_by_node_type(parsed_file, "decorator", None);
 
     for decorator_node in decorator_nodes {
         if is_within_construct(parsed_file, &decorator_node, construct) {
             // Look for identifiers within this decorator
-            let decorator_identifiers =
-                tree_parser::search_by_node_type(parsed_file, "identifier", None);
+            let decorator_identifiers = search_by_node_type(parsed_file, "identifier", None);
 
             for identifier in decorator_identifiers {
                 if is_within_construct(parsed_file, &identifier, &decorator_node) {
@@ -899,7 +892,7 @@ fn has_setter(parsed_file: &ParsedFile, construct: &CodeConstruct) -> bool {
             )"
         );
 
-        if let Ok(setter_constructs) = tree_parser::search_by_query(parsed_file, &setter_query) {
+        if let Ok(setter_constructs) = search_by_query(parsed_file, &setter_query) {
             for setter_construct in setter_constructs {
                 if let Some(setter_name) = &setter_construct.name {
                     if setter_name == prop_name {
@@ -931,7 +924,7 @@ fn extract_enum_values(
         )"
     );
 
-    match tree_parser::search_by_query(parsed_file, &enum_value_query) {
+    match search_by_query(parsed_file, &enum_value_query) {
         Ok(enum_value_constructs) => {
             for enum_value_construct in enum_value_constructs {
                 if is_within_construct(parsed_file, &enum_value_construct, construct) {
